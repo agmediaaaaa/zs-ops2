@@ -111,9 +111,13 @@ def schedule_to_schedules(schedule: dict | None, daily_limit: int | None) -> lis
     tz = schedule.get("tz") or schedule.get("timezone") or "America/New_York"
     from_time = schedule.get("from_time") or schedule.get("timing", {}).get("from") or "09:00"
     to_time = schedule.get("to_time") or schedule.get("timing", {}).get("to") or "17:00"
+    from datetime import date
+
     return [
         {
             "daily_limit": daily_limit or 500,
+            "start_date": date.today().isoformat(),
+            "end_date": "",
             "days": days_out,
             "timezone": tz,
             "timing": {"from": from_time, "to": to_time},

@@ -27,7 +27,7 @@ See `hire-tech-step1-scripts.json` for full copy.
 
 ## PlusVibe setup
 
-1. Set `workspace_id` and `campaign_id` in `plusvibe.config.json` (Hire Tech workspace + target campaign).
+1. PlusVibe workspace **Hire Tech Partners** (`6a13348c960455ee22ae829d`), campaign **Hire Tech - Custom Scripts (8 variants)** (`6a21ce2c38749bf6ddf2cd89`) — live in DRAFT.
 2. Optional: point `CAMP_FILE` at the ZS campaign export (`f0f2ec0a-…txt`) to pull live settings from a template campaign.
 3. Run `python scripts/build_hire_tech_campaign_patch.py` → writes `clients/hire-tech/hire-tech-campaign-patch.json`.
 4. Apply with `PLUSVIBE_API_KEY` set: `python scripts/apply_plusvibe_campaign_patch.py clients/hire-tech/hire-tech-campaign-patch.json`

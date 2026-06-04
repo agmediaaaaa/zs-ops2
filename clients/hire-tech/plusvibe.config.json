@@ -1,9 +1,10 @@
 {
-  "workspace_name": "Hire Tech",
-  "workspace_id": "1f7e83cb672f4e9cdf88dbeb",
-  "campaign_id": "672f4e9cdf88dbebfd7f9428",
-  "campaign_name": "",
-  "zs_workspace_id": "694c1ae9ebef3b84192da7fc",
-  "zs_template_campaign": "v2 Sales",
+  "workspace_name": "Hire Tech Partners",
+  "workspace_id": "6a13348c960455ee22ae829d",
+  "campaign_id": "6a21ce2c38749bf6ddf2cd89",
+  "campaign_name": "Hire Tech - Custom Scripts (8 variants)",
+  "zs_workspace_id": "69a5b2169433a45c6f6d7d1c",
+  "zs_template_campaign_id": "69fae9c435ed857458d57321",
+  "zs_template_campaign": "v2 SaaS(11-50)-Csuite-Google",
   "subject_line": "{{first_name}}"
 }
