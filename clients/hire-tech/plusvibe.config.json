@@ -1,0 +1,9 @@
+{
+  "workspace_name": "Hire Tech",
+  "workspace_id": "",
+  "campaign_id": "",
+  "campaign_name": "",
+  "zs_workspace_id": "694c1ae9ebef3b84192da7fc",
+  "zs_template_campaign": "v2 Sales",
+  "subject_line": "{{first_name}}"
+}

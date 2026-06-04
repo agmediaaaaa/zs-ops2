@@ -1,0 +1,94 @@
+{
+  "workspace_id": "",
+  "campaign_id": "",
+  "sequences": [
+    {
+      "step": 1,
+      "wait_time": 2,
+      "variations": [
+        {
+          "variation": "A",
+          "name": "Version 1 — My Favorite",
+          "subject": "{{first_name}}",
+          "body": "{{first_name}},\nlooks like you're building {{custom_company_type}}.\nTeams in that space often need strong {{custom_talent_type}} talent, especially when candidates have experience like {{custom_teaser}}.\nOpen to a quick call? Happy to learn more about your team and share the types of profiles we've been seeing."
+        },
+        {
+          "variation": "B",
+          "name": "Version 2",
+          "subject": "{{first_name}}",
+          "body": "{{first_name}},\nnoticed you're in the {{custom_company_type}} space.\nCurious how you're approaching {{custom_talent_type}} hiring these days.\nWe're seeing more candidates with backgrounds like {{custom_teaser}} enter the market.\nWorth a quick conversation?"
+        },
+        {
+          "variation": "C",
+          "name": "Version 3",
+          "subject": "{{first_name}}",
+          "body": "{{first_name}},\ncompanies building {{custom_company_type}} usually tell us finding experienced {{custom_talent_type}} talent is easier said than done.\nWe've been seeing more candidates with experience around {{custom_teaser}} recently.\nOpen to a quick chat to compare notes?"
+        },
+        {
+          "variation": "D",
+          "name": "Version 4",
+          "subject": "{{first_name}}",
+          "body": "{{first_name}},\nnot sure if hiring is a priority right now.\nThat said, teams building {{custom_company_type}} often ask us about {{custom_talent_type}} talent with experience like {{custom_teaser}}.\nWould it make sense to have a quick conversation and see if there's any overlap?"
+        },
+        {
+          "variation": "E",
+          "name": "Version 5",
+          "subject": "{{first_name}}",
+          "body": "{{first_name}},\nquick question.\nWhen companies in {{custom_company_type}} need {{custom_talent_type}} talent, are you handling those searches internally?\nWe've been spending a lot of time around candidates with backgrounds like {{custom_teaser}}.\nOpen to a brief chat?"
+        },
+        {
+          "variation": "F",
+          "name": "Version 6 — Most Consultative",
+          "subject": "{{first_name}}",
+          "body": "{{first_name}},\nsaw you're building {{custom_company_type}}.\nWe're spending a lot of time speaking with {{custom_talent_type}} candidates, particularly those who've worked on things like {{custom_teaser}}.\nOpen to a quick call? Happy to learn more about your hiring plans and share what we're seeing in the market."
+        },
+        {
+          "variation": "G",
+          "name": "Version 7 — Founder-Friendly",
+          "subject": "{{first_name}}",
+          "body": "{{first_name}},\nbuilding a great {{custom_company_type}} team usually comes down to finding the right {{custom_talent_type}} talent before everyone else does.\nWe've been seeing candidates with experience around {{custom_teaser}} become increasingly sought after.\nWorth a quick conversation?"
+        },
+        {
+          "variation": "H",
+          "name": "Version 8 — Simple",
+          "subject": "{{first_name}}",
+          "body": "{{first_name}},\nlooks like you're building {{custom_company_type}}.\nOut of curiosity, how difficult is it to find strong {{custom_talent_type}} talent with experience like {{custom_teaser}}?\nHappy to jump on a quick call and share what we're seeing across the market."
+        }
+      ]
+    }
+  ],
+  "first_wait_time": 0,
+  "opportunity_val": 10000,
+  "is_pause_on_bouncerate": "yes",
+  "bounce_rate_limit": 2.5,
+  "send_as_txt": "yes",
+  "stop_on_lead_replied": "yes",
+  "is_emailopened_tracking": "no",
+  "is_unsubscribed_link": "no",
+  "exclude_ooo": "no",
+  "is_acc_based_sending": "no",
+  "send_risky_email": "no",
+  "unsub_blocklist": "no",
+  "other_email_acc": "yes",
+  "is_esp_match": "no",
+  "send_priority": 0.25,
+  "daily_limit": 600,
+  "interval_limit_in_min": 1,
+  "schedules": [
+    {
+      "daily_limit": 600,
+      "days": {
+        "1": true,
+        "2": true,
+        "3": true,
+        "4": true,
+        "5": true
+      },
+      "timezone": "America/New_York",
+      "timing": {
+        "from": "10:00",
+        "to": "17:00"
+      }
+    }
+  ]
+}
