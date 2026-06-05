@@ -1,0 +1,10 @@
+{
+  "workspace_name": "Pro-Recruiting",
+  "workspace_id": "694c1ae9ebef3b84192da7fc",
+  "campaign_id": "6a22a915b134eef28b665bbb",
+  "campaign_name": "Custom Talent Scripts (8 variants)",
+  "template_campaign_id": "69df8155d399ded33bc39cae",
+  "template_campaign": "v2 Sales",
+  "scripts_source": "custom-talent-step1-scripts.json",
+  "subject_line": "{{first_name}}"
+}

@@ -3,6 +3,7 @@
   "workspace_id": "6a13348c960455ee22ae829d",
   "campaign_id": "6a21ce2c38749bf6ddf2cd89",
   "campaign_name": "Hire Tech - Custom Scripts (8 variants)",
+  "scripts_source": "../custom-talent/custom-talent-step1-scripts.json",
   "zs_workspace_id": "69a5b2169433a45c6f6d7d1c",
   "zs_template_campaign_id": "69fae9c435ed857458d57321",
   "zs_template_campaign": "v2 SaaS(11-50)-Csuite-Google",
