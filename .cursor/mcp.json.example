@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "ai-ark": {
+      "url": "https://api.ai-ark.com/v1/mcp?token={YOUR-API-KEY}"
+    }
+  }
+}
