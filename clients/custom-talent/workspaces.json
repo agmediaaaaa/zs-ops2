@@ -1,0 +1,21 @@
+{
+  "scripts_file": "custom-talent-step1-scripts.json",
+  "deployments": [
+    {
+      "label": "Hire Tech Partners",
+      "workspace_id": "6a13348c960455ee22ae829d",
+      "campaign_name": "Hire Tech - Custom Scripts (8 variants)",
+      "template_workspace_id": "69a5b2169433a45c6f6d7d1c",
+      "template_campaign_id": "69fae9c435ed857458d57321",
+      "patch_file": "../hire-tech/hire-tech-campaign-patch.json"
+    },
+    {
+      "label": "Pro-Recruiting",
+      "workspace_id": "694c1ae9ebef3b84192da7fc",
+      "campaign_name": "Custom Talent Scripts (8 variants)",
+      "template_workspace_id": "694c1ae9ebef3b84192da7fc",
+      "template_campaign_id": "69df8155d399ded33bc39cae",
+      "patch_file": "pro-recruiting-campaign-patch.json"
+    }
+  ]
+}
