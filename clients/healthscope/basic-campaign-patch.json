@@ -1,0 +1,52 @@
+{
+  "workspace_id": "6a1334c74be1e70c4918deab",
+  "campaign_id": "6a23d05c89340604384ff7fd",
+  "sequences": [
+    {
+      "step": 1,
+      "wait_time": 1,
+      "variations": [
+        {
+          "variation": "A",
+          "name": "Basic",
+          "subject": "{{first_name}}",
+          "body": "<div><br></div>"
+        }
+      ]
+    }
+  ],
+  "first_wait_time": 0,
+  "opportunity_val": 0,
+  "is_pause_on_bouncerate": "yes",
+  "bounce_rate_limit": 2,
+  "send_as_txt": "yes",
+  "stop_on_lead_replied": "yes",
+  "is_emailopened_tracking": "no",
+  "is_unsubscribed_link": "no",
+  "exclude_ooo": "yes",
+  "is_acc_based_sending": "no",
+  "send_risky_email": "no",
+  "unsub_blocklist": "no",
+  "other_email_acc": "no",
+  "is_esp_match": "no",
+  "send_priority": 0.5,
+  "schedules": [
+    {
+      "daily_limit": 1000,
+      "start_date": "2026-06-06",
+      "end_date": "",
+      "days": {
+        "1": true,
+        "2": true,
+        "3": true,
+        "4": true,
+        "5": true
+      },
+      "timezone": "America/New_York",
+      "timing": {
+        "from": "10:00",
+        "to": "16:30"
+      }
+    }
+  ]
+}
