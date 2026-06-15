@@ -679,6 +679,8 @@ def enrich_csv_leads(input_csv: Path, limit: int, out_csv: Path | None = None) -
                     encoding="utf-8",
                 )
             time.sleep(0.2)
+    except CreditError as exc:
+        print(f"Stopped early — insufficient credits: {exc}", flush=True)
     finally:
         partial_fh.close()
 
