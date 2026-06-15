@@ -21,6 +21,7 @@ OUT_CSV = ARTIFACTS / "Healthcare-founders-owners-netnew.csv"
 OUT_CSV_5K = ARTIFACTS / "Healthcare-founders-owners-netnew-5000.csv"
 OUT_CSV_EMAIL = ARTIFACTS / "Healthcare-founders-owners-netnew-5000-email.csv"
 WEBHOOK_CACHE_PATH = ARTIFACTS / "export_webhook.json"
+ENRICH_CHECKPOINT_PATH = ARTIFACTS / "email-enrich-checkpoint.json"
 PREVIEW_JSON = ARTIFACTS / "healthcare-founders-preview.json"
 
 DEFAULT_EXPORT_LIMIT = 5000
@@ -624,52 +625,99 @@ def enrich_people_with_single_export(
     return enriched[:limit]
 
 
-def enrich_csv_leads(input_csv: Path, limit: int) -> list[dict]:
+def enrich_csv_leads(input_csv: Path, limit: int, out_csv: Path | None = None) -> list[dict[str, str]]:
     rows = list(csv.DictReader(input_csv.open(encoding="utf-8")))
-    enriched: list[dict] = []
-    print(f"Enriching {len(rows):,} leads from {input_csv.name}...")
+    enriched_rows: list[dict[str, str]] = []
+    start_index = 0
+    partial_csv = (out_csv or OUT_CSV_EMAIL).with_suffix(".partial.csv")
 
-    for i, row in enumerate(rows, 1):
-        if len(enriched) >= limit:
-            break
-        linkedin = (row.get("LinkedIn") or "").strip()
-        if not linkedin:
-            continue
-        item = enrich_single_person(linkedin=linkedin)
-        if not item:
-            continue
-        email = email_fields(item)[0].strip()
-        if not email:
-            continue
-        enriched.append(item)
-        if i % 25 == 0 or len(enriched) % 25 == 0:
-            print(f"  scanned {i:,}, emails {len(enriched):,}/{limit:,}")
-        time.sleep(0.2)
-
-    if len(enriched) < limit:
+    if ENRICH_CHECKPOINT_PATH.exists():
+        checkpoint = json.loads(ENRICH_CHECKPOINT_PATH.read_text(encoding="utf-8"))
+        start_index = int(checkpoint.get("next_index") or 0)
         print(
-            f"CSV enrichment found {len(enriched):,} emails; "
-            f"searching for {limit - len(enriched):,} more..."
+            f"Resuming enrichment at row {start_index + 1:,} "
+            f"({checkpoint.get('emails_found', 0):,} emails already found)",
+            flush=True,
         )
-        enriched.extend(
-            enrich_people_with_single_export(
-                list_uuids=None,
-                limit=limit - len(enriched),
-                seed_items=enriched,
-            )
+
+    print(f"Enriching {len(rows):,} leads from {input_csv.name}...", flush=True)
+    write_header = not partial_csv.exists() or partial_csv.stat().st_size == 0
+    partial_fh = partial_csv.open("a", newline="", encoding="utf-8")
+    partial_writer = csv.DictWriter(partial_fh, fieldnames=STANDARD_HEADERS)
+    if write_header:
+        partial_writer.writeheader()
+
+    emails_found = 0
+    seed_items: list[dict] = []
+    try:
+        for i, row in enumerate(rows[start_index:], start_index + 1):
+            if emails_found >= limit:
+                break
+            linkedin = (row.get("LinkedIn") or "").strip()
+            if not linkedin:
+                continue
+            item = enrich_single_person(linkedin=linkedin)
+            if not item:
+                continue
+            email = email_fields(item)[0].strip()
+            if not email:
+                continue
+            out_row = person_to_row(item)
+            enriched_rows.append(out_row)
+            seed_items.append(item)
+            partial_writer.writerow(out_row)
+            partial_fh.flush()
+            emails_found += 1
+            if i % 25 == 0 or emails_found % 25 == 0:
+                print(
+                    f"  scanned {i:,}, emails {emails_found:,}/{limit:,}",
+                    flush=True,
+                )
+            if i % 50 == 0:
+                ENRICH_CHECKPOINT_PATH.write_text(
+                    json.dumps({"next_index": i, "emails_found": emails_found}),
+                    encoding="utf-8",
+                )
+            time.sleep(0.2)
+    finally:
+        partial_fh.close()
+
+    if ENRICH_CHECKPOINT_PATH.exists():
+        ENRICH_CHECKPOINT_PATH.unlink(missing_ok=True)
+
+    if emails_found < limit:
+        print(
+            f"CSV enrichment found {emails_found:,} emails; "
+            f"searching for {limit - emails_found:,} more...",
+            flush=True,
         )
-    return enriched[:limit]
+        extra_items = enrich_people_with_single_export(
+            list_uuids=None,
+            limit=limit - emails_found,
+            seed_items=seed_items,
+        )
+        extra_rows = [person_to_row(item) for item in extra_items]
+        enriched_rows.extend(extra_rows)
+        with partial_csv.open("a", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=STANDARD_HEADERS)
+            writer.writerows(extra_rows)
+
+    if partial_csv.exists():
+        final_rows = list(csv.DictReader(partial_csv.open(encoding="utf-8")))
+        partial_csv.unlink(missing_ok=True)
+        return final_rows[:limit]
+
+    return enriched_rows[:limit]
 
 
 def cmd_enrich_csv(input_csv: Path, limit: int, out_csv: Path) -> int:
-    items = enrich_csv_leads(input_csv, limit)
-    rows = [person_to_row(item) for item in items]
+    final_rows = enrich_csv_leads(input_csv, limit, out_csv=out_csv)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     with out_csv.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=STANDARD_HEADERS)
         writer.writeheader()
-        writer.writerows(rows)
-    print(f"Wrote {len(rows):,} leads with verified emails to {out_csv}")
+        writer.writerows(final_rows)
+    print(f"Wrote {len(final_rows):,} leads with verified emails to {out_csv}")
     return 0
 
 
@@ -1095,6 +1143,8 @@ def cmd_export(
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("resolve-lists", help="Resolve workspace list UUIDs by name")
