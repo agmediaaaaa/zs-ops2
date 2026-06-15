@@ -20,6 +20,7 @@ API_EXCLUDE_PATH = ARTIFACTS / "api_exclude_lists.json"
 OUT_CSV = ARTIFACTS / "Healthcare-founders-owners-netnew.csv"
 OUT_CSV_5K = ARTIFACTS / "Healthcare-founders-owners-netnew-5000.csv"
 OUT_CSV_EMAIL = ARTIFACTS / "Healthcare-founders-owners-netnew-5000-email.csv"
+WEBHOOK_CACHE_PATH = ARTIFACTS / "export_webhook.json"
 PREVIEW_JSON = ARTIFACTS / "healthcare-founders-preview.json"
 
 DEFAULT_EXPORT_LIMIT = 5000
@@ -118,6 +119,39 @@ def api_key() -> str:
     if not key:
         raise SystemExit("AIARK_API_KEY is not set (.env or environment).")
     return key
+
+
+def export_webhook_url() -> str:
+    """Callback URL required by AI Ark async email export (results fetched via polling)."""
+    load_dotenv()
+    configured = os.environ.get("AIARK_EXPORT_WEBHOOK", "").strip()
+    if configured:
+        return configured
+
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    if WEBHOOK_CACHE_PATH.exists():
+        cached = json.loads(WEBHOOK_CACHE_PATH.read_text(encoding="utf-8"))
+        url = str(cached.get("url") or "").strip()
+        if url:
+            return url
+
+    req = urllib.request.Request(
+        "https://webhook.site/token",
+        data=b"{}",
+        headers={"Content-Type": "application/json", "User-Agent": "curl/8.5.0"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        token = json.loads(resp.read().decode("utf-8"))
+    uuid = str(token.get("uuid") or "").strip()
+    if not uuid:
+        raise SystemExit(f"Could not create export webhook URL: {token}")
+    url = f"https://webhook.site/{uuid}"
+    WEBHOOK_CACHE_PATH.write_text(
+        json.dumps({"url": url, "uuid": uuid}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return url
 
 
 def api_request(method: str, path: str, payload: dict | None = None) -> dict:
@@ -387,6 +421,7 @@ def start_email_export(list_uuids: list[str] | None, size: int) -> str:
     payload = build_search_payload(list_uuids)
     payload["page"] = 0
     payload["size"] = min(size, 10000)
+    payload["webhook"] = export_webhook_url()
     result = api_request("POST", "/v1/people/export", payload)
     track_id = result.get("trackId")
     if not track_id:
@@ -812,6 +847,8 @@ def cmd_export(
     list_uuids = all_exclude_list_uuids(skip_api_exclude=skip_api_exclude)
     if workspace_uuids:
         print(f"Excluding workspace lists: {', '.join(workspace_uuids)}")
+    elif skip_api_exclude:
+        print("Skipping API exclude lists — re-enriching the same search cohort with emails.")
     elif load_api_exclude_list_ids():
         print(
             f"Excluding {len(load_api_exclude_list_ids())} prior API list(s) "
