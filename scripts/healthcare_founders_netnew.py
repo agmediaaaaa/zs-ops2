@@ -422,7 +422,12 @@ def start_email_export(list_uuids: list[str] | None, size: int) -> str:
     payload["page"] = 0
     payload["size"] = min(size, 10000)
     payload["webhook"] = export_webhook_url()
-    result = api_request("POST", "/v1/people/export", payload)
+    try:
+        result = api_request("POST", "/v1/people/export", payload)
+    except SystemExit as exc:
+        if "402" in str(exc) or "credit" in str(exc).lower():
+            raise CreditError(str(exc)) from exc
+        raise
     track_id = result.get("trackId")
     if not track_id:
         raise SystemExit(f"Email export did not return trackId: {result}")
@@ -432,6 +437,10 @@ def start_email_export(list_uuids: list[str] | None, size: int) -> str:
         f"(queued {stats.get('total', '?')} leads)"
     )
     return str(track_id)
+
+
+class CreditError(RuntimeError):
+    """AI Ark account has insufficient credits for the requested bulk export."""
 
 
 def poll_email_export(track_id: str, timeout_s: int = 7200) -> dict:
@@ -499,13 +508,169 @@ def export_with_emails(
 ) -> list[dict]:
     buffer = 3.0 if email_only else cap_buffer
     request_size = min(10000, max(limit, int(limit * buffer)))
-    track_id = start_email_export(list_uuids, request_size)
-    poll_email_export(track_id)
-    items = fetch_email_export_results(track_id)
-    capped = cap_per_company(items, 2)
-    if email_only:
-        capped = [item for item in capped if email_fields(item)[0].strip()]
-    return capped[:limit]
+    bulk_sizes = []
+    for size in (request_size, 1500, 1000, 500):
+        if size not in bulk_sizes and size >= min(limit, 100):
+            bulk_sizes.append(size)
+
+    for size in bulk_sizes:
+        try:
+            track_id = start_email_export(list_uuids, size)
+            poll_email_export(track_id)
+            items = fetch_email_export_results(track_id)
+            capped = cap_per_company(items, 2)
+            if email_only:
+                capped = [item for item in capped if email_fields(item)[0].strip()]
+            if len(capped) >= limit or size == bulk_sizes[-1]:
+                return capped[:limit]
+            print(
+                f"Bulk export returned {len(capped):,} emails; "
+                "falling back to single-person enrichment for remainder."
+            )
+            break
+        except CreditError:
+            print(f"Bulk email export unavailable at size={size:,} (insufficient credits).")
+            continue
+
+    return enrich_people_with_single_export(
+        list_uuids=list_uuids,
+        limit=limit,
+        seed_items=[],
+    )
+
+
+def enrich_single_person(*, person_uuid: str = "", linkedin: str = "") -> dict | None:
+    body: dict[str, str] = {}
+    if person_uuid:
+        body["id"] = person_uuid
+    elif linkedin:
+        body["url"] = linkedin
+    else:
+        return None
+    try:
+        return api_request("POST", "/v1/people/export/single", body)
+    except SystemExit as exc:
+        msg = str(exc)
+        if "404" in msg or "no email found" in msg.lower():
+            return None
+        if "402" in msg or "credit" in msg.lower():
+            raise CreditError(msg) from exc
+        raise
+
+
+def enrich_people_with_single_export(
+    list_uuids: list[str] | None,
+    limit: int,
+    seed_items: list[dict] | None = None,
+) -> list[dict]:
+    enriched: list[dict] = []
+    seen_linkedin: set[str] = set()
+    company_counts: dict[str, int] = {}
+
+    for item in seed_items or []:
+        li = norm_linkedin((item.get("link") or {}).get("linkedin"))
+        if li:
+            seen_linkedin.add(li)
+        key = company_key(item)
+        company_counts[key] = company_counts.get(key, 0) + 1
+
+    page = 0
+    size = 100
+    print(f"Enriching leads one-by-one until {limit:,} verified emails...")
+
+    while len(enriched) < limit:
+        result = people_search(page=page, size=size, list_uuids=list_uuids)
+        content = result.get("content") or []
+        if not content:
+            break
+
+        for item in content:
+            li = norm_linkedin((item.get("link") or {}).get("linkedin"))
+            if li and li in seen_linkedin:
+                continue
+            if li:
+                seen_linkedin.add(li)
+
+            key = company_key(item)
+            if company_counts.get(key, 0) >= 2:
+                continue
+
+            pid = person_id(item)
+            enriched_item = enrich_single_person(
+                person_uuid=pid,
+                linkedin=li,
+            )
+            if not enriched_item:
+                continue
+            email = email_fields(enriched_item)[0].strip()
+            if not email:
+                continue
+
+            enriched.append(enriched_item)
+            company_counts[key] = company_counts.get(key, 0) + 1
+            if len(enriched) % 25 == 0:
+                print(f"  {len(enriched):,}/{limit:,} emails found")
+            if len(enriched) >= limit:
+                break
+            time.sleep(0.2)
+
+        total_pages = int(result.get("totalPages") or 0)
+        print(f"Search page {page + 1}/{total_pages} ({len(enriched):,} emails so far)")
+        if result.get("last") or page + 1 >= total_pages:
+            break
+        page += 1
+        time.sleep(0.22)
+
+    return enriched[:limit]
+
+
+def enrich_csv_leads(input_csv: Path, limit: int) -> list[dict]:
+    rows = list(csv.DictReader(input_csv.open(encoding="utf-8")))
+    enriched: list[dict] = []
+    print(f"Enriching {len(rows):,} leads from {input_csv.name}...")
+
+    for i, row in enumerate(rows, 1):
+        if len(enriched) >= limit:
+            break
+        linkedin = (row.get("LinkedIn") or "").strip()
+        if not linkedin:
+            continue
+        item = enrich_single_person(linkedin=linkedin)
+        if not item:
+            continue
+        email = email_fields(item)[0].strip()
+        if not email:
+            continue
+        enriched.append(item)
+        if i % 25 == 0 or len(enriched) % 25 == 0:
+            print(f"  scanned {i:,}, emails {len(enriched):,}/{limit:,}")
+        time.sleep(0.2)
+
+    if len(enriched) < limit:
+        print(
+            f"CSV enrichment found {len(enriched):,} emails; "
+            f"searching for {limit - len(enriched):,} more..."
+        )
+        enriched.extend(
+            enrich_people_with_single_export(
+                list_uuids=None,
+                limit=limit - len(enriched),
+                seed_items=enriched,
+            )
+        )
+    return enriched[:limit]
+
+
+def cmd_enrich_csv(input_csv: Path, limit: int, out_csv: Path) -> int:
+    items = enrich_csv_leads(input_csv, limit)
+    rows = [person_to_row(item) for item in items]
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    with out_csv.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=STANDARD_HEADERS)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"Wrote {len(rows):,} leads with verified emails to {out_csv}")
+    return 0
 
 
 def norm_linkedin(url: str | None) -> str:
@@ -934,6 +1099,28 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("resolve-lists", help="Resolve workspace list UUIDs by name")
     sub.add_parser("preview", help="Print net-new count and 10 sample leads")
+    enrich_parser = sub.add_parser(
+        "enrich-csv",
+        help="Enrich an existing profile CSV with verified emails (email-only rows)",
+    )
+    enrich_parser.add_argument(
+        "--input",
+        type=Path,
+        default=OUT_CSV_5K,
+        help="Profile-only CSV to enrich",
+    )
+    enrich_parser.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_EXPORT_LIMIT,
+        help=f"Target rows with verified emails (default: {DEFAULT_EXPORT_LIMIT})",
+    )
+    enrich_parser.add_argument(
+        "--output",
+        type=Path,
+        default=OUT_CSV_EMAIL,
+        help="Output CSV path",
+    )
     export_parser = sub.add_parser(
         "export",
         help="Export net-new leads with verified emails (max 2 per company)",
@@ -976,6 +1163,8 @@ def main() -> int:
         return cmd_resolve_lists()
     if args.command == "preview":
         return cmd_preview()
+    if args.command == "enrich-csv":
+        return cmd_enrich_csv(args.input, args.limit, args.output)
     if args.command == "export":
         return cmd_export(
             limit=args.limit,
