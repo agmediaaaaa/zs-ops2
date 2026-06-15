@@ -19,6 +19,7 @@ LIST_IDS_PATH = ARTIFACTS / "list_ids.json"
 API_EXCLUDE_PATH = ARTIFACTS / "api_exclude_lists.json"
 OUT_CSV = ARTIFACTS / "Healthcare-founders-owners-netnew.csv"
 OUT_CSV_5K = ARTIFACTS / "Healthcare-founders-owners-netnew-5000.csv"
+OUT_CSV_EMAIL = ARTIFACTS / "Healthcare-founders-owners-netnew-5000-email.csv"
 PREVIEW_JSON = ARTIFACTS / "healthcare-founders-preview.json"
 
 DEFAULT_EXPORT_LIMIT = 5000
@@ -276,9 +277,9 @@ def save_api_exclude_list_ids(list_ids: list[str], *, target_list: str) -> None:
     )
 
 
-def all_exclude_list_uuids() -> list[str]:
+def all_exclude_list_uuids(*, skip_api_exclude: bool = False) -> list[str]:
     workspace = [v for v in resolve_list_ids(quiet=True) if v]
-    api_lists = load_api_exclude_list_ids()
+    api_lists = [] if skip_api_exclude else load_api_exclude_list_ids()
     seen: set[str] = set()
     merged: list[str] = []
     for uuid in workspace + api_lists:
@@ -382,6 +383,96 @@ def people_search(page: int, size: int, list_uuids: list[str] | None) -> dict:
     return api_request("POST", "/v1/people", payload)
 
 
+def start_email_export(list_uuids: list[str] | None, size: int) -> str:
+    payload = build_search_payload(list_uuids)
+    payload["page"] = 0
+    payload["size"] = min(size, 10000)
+    result = api_request("POST", "/v1/people/export", payload)
+    track_id = result.get("trackId")
+    if not track_id:
+        raise SystemExit(f"Email export did not return trackId: {result}")
+    stats = result.get("statistics") or {}
+    print(
+        f"Started email export trackId={track_id} "
+        f"(queued {stats.get('total', '?')} leads)"
+    )
+    return str(track_id)
+
+
+def poll_email_export(track_id: str, timeout_s: int = 7200) -> dict:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        result = api_request("GET", f"/v1/people/export/{track_id}/statistics")
+        state = str(result.get("state") or "").upper()
+        stats = result.get("statistics") or {}
+        total = stats.get("total")
+        found = stats.get("found")
+        print(f"Email export {track_id}: state={state} total={total} found={found}")
+        if state in {"DONE", "COMPLETED", "SUCCESS", "FINISHED"}:
+            return result
+        if state in {"FAILED", "ERROR"}:
+            raise SystemExit(f"Email export failed: {result}")
+        time.sleep(15)
+    raise SystemExit(f"Email export timed out after {timeout_s}s (trackId={track_id})")
+
+
+def fetch_email_export_results(track_id: str) -> list[dict]:
+    page = 0
+    size = 100
+    items: list[dict] = []
+    seen_linkedin: set[str] = set()
+
+    while True:
+        try:
+            result = api_request(
+                "GET",
+                f"/v1/people/export/{track_id}/inquiries?page={page}&size={size}",
+            )
+        except SystemExit as exc:
+            if "409" in str(exc):
+                print("Export still processing (409); waiting...")
+                time.sleep(15)
+                continue
+            raise
+        content = result.get("content") or []
+        for item in content:
+            li = norm_linkedin((item.get("link") or {}).get("linkedin"))
+            if li and li in seen_linkedin:
+                continue
+            if li:
+                seen_linkedin.add(li)
+            items.append(item)
+
+        total_pages = int(result.get("totalPages") or 0)
+        print(
+            f"Email results page {page + 1}/{max(total_pages, 1)} "
+            f"({len(items)} unique leads)"
+        )
+        if result.get("last") or not content or page + 1 >= total_pages:
+            break
+        page += 1
+        time.sleep(0.22)
+
+    return items
+
+
+def export_with_emails(
+    list_uuids: list[str] | None,
+    limit: int,
+    cap_buffer: float = 1.5,
+    email_only: bool = True,
+) -> list[dict]:
+    buffer = 3.0 if email_only else cap_buffer
+    request_size = min(10000, max(limit, int(limit * buffer)))
+    track_id = start_email_export(list_uuids, request_size)
+    poll_email_export(track_id)
+    items = fetch_email_export_results(track_id)
+    capped = cap_per_company(items, 2)
+    if email_only:
+        capped = [item for item in capped if email_fields(item)[0].strip()]
+    return capped[:limit]
+
+
 def norm_linkedin(url: str | None) -> str:
     if not url:
         return ""
@@ -447,6 +538,26 @@ def company_key(item: dict) -> str:
     return name.lower()
 
 
+def email_fields(item: dict) -> tuple[str, str, str, str]:
+    """Return business email, status, domain type, MX record from export payload."""
+    email_obj = item.get("email") or {}
+    outputs = email_obj.get("output") or []
+    if not outputs:
+        legacy = item.get("email")
+        if isinstance(legacy, str):
+            return legacy, "", "", ""
+        link = item.get("link") or {}
+        return link.get("email") or "", "", "", ""
+    out = outputs[0]
+    mx = (out.get("mx") or {}).get("record") or ""
+    return (
+        out.get("address") or "",
+        out.get("status") or "",
+        out.get("domainType") or "",
+        mx,
+    )
+
+
 def person_to_row(item: dict) -> dict[str, str]:
     profile = item.get("profile") or {}
     link = item.get("link") or {}
@@ -483,6 +594,7 @@ def person_to_row(item: dict) -> dict[str, str]:
 
     badges = item.get("member_badges") or {}
     creator = "Yes" if badges.get("creator") else "No"
+    biz_email, email_status, domain_type, mx_record = email_fields(item)
 
     return {
         "First Name": profile.get("first_name") or "",
@@ -492,8 +604,8 @@ def person_to_row(item: dict) -> dict[str, str]:
         "Headline": profile.get("headline") or "",
         "Summary": profile.get("summary") or "",
         "Creator": creator,
-        "MX Records": "",
-        "Email Business": link.get("email") or item.get("email") or "",
+        "MX Records": mx_record,
+        "Email Business": biz_email,
         "Business Status": "",
         "Domain Settings": "",
         "Mobile Phone": link.get("phone") or "",
@@ -517,8 +629,8 @@ def person_to_row(item: dict) -> dict[str, str]:
         "Company Total Funding": total_fund,
         "Company Last Funding Type": last_fund,
         "Domain": domain,
-        "Email Status": "",
-        "Domain Type": "",
+        "Email Status": email_status,
+        "Domain Type": domain_type,
         "Label": LABEL,
     }
 
@@ -688,9 +800,16 @@ def fetch_people(list_uuids: list[str] | None, limit: int | None) -> list[dict]:
     return all_items
 
 
-def cmd_export(limit: int, out_csv: Path, add_to_list: bool) -> int:
+def cmd_export(
+    limit: int,
+    out_csv: Path,
+    add_to_list: bool,
+    with_email: bool,
+    skip_api_exclude: bool,
+    email_only: bool,
+) -> int:
     workspace_uuids = resolve_list_ids(quiet=True)
-    list_uuids = all_exclude_list_uuids()
+    list_uuids = all_exclude_list_uuids(skip_api_exclude=skip_api_exclude)
     if workspace_uuids:
         print(f"Excluding workspace lists: {', '.join(workspace_uuids)}")
     elif load_api_exclude_list_ids():
@@ -700,43 +819,53 @@ def cmd_export(limit: int, out_csv: Path, add_to_list: bool) -> int:
         )
     else:
         print(
-            "Workspace list UUIDs not found — exporting current net-new page "
-            f"results, then saving IDs to API list for {TARGET_LIST_NAME}."
+            "Workspace list UUIDs not found — exporting net-new results, "
+            f"then saving IDs to API list for {TARGET_LIST_NAME}."
         )
 
-    page = 0
-    size = 100
-    capped: list[dict] = []
-    seen_linkedin: set[str] = set()
-    raw_count = 0
-
-    while len(capped) < limit:
-        result = people_search(page=page, size=size, list_uuids=list_uuids or None)
-        content = result.get("content") or []
-        if not content:
-            break
-        batch: list[dict] = []
-        for item in content:
-            li = norm_linkedin((item.get("link") or {}).get("linkedin"))
-            if li and li in seen_linkedin:
-                continue
-            if li:
-                seen_linkedin.add(li)
-            batch.append(item)
-            raw_count += 1
-        capped = cap_per_company(capped + batch, 2)[:limit]
-
-        total_pages = int(result.get("totalPages") or 0)
-        print(
-            f"Fetched page {page + 1}/{total_pages} "
-            f"({raw_count} raw, {len(capped)} exportable)"
+    if with_email:
+        print(f"Running BounceBan-validated email export (limit {limit:,} after cap)...")
+        capped = export_with_emails(
+            list_uuids=list_uuids or None,
+            limit=limit,
+            email_only=email_only,
         )
-        if result.get("last") or page + 1 >= total_pages:
-            break
-        page += 1
-        time.sleep(0.22)
+        raw_count = len(capped)
+    else:
+        page = 0
+        size = 100
+        capped = []
+        seen_linkedin: set[str] = set()
+        raw_count = 0
+
+        while len(capped) < limit:
+            result = people_search(page=page, size=size, list_uuids=list_uuids or None)
+            content = result.get("content") or []
+            if not content:
+                break
+            batch: list[dict] = []
+            for item in content:
+                li = norm_linkedin((item.get("link") or {}).get("linkedin"))
+                if li and li in seen_linkedin:
+                    continue
+                if li:
+                    seen_linkedin.add(li)
+                batch.append(item)
+                raw_count += 1
+            capped = cap_per_company(capped + batch, 2)[:limit]
+
+            total_pages = int(result.get("totalPages") or 0)
+            print(
+                f"Fetched page {page + 1}/{total_pages} "
+                f"({raw_count} raw, {len(capped)} exportable)"
+            )
+            if result.get("last") or page + 1 >= total_pages:
+                break
+            page += 1
+            time.sleep(0.22)
 
     rows = [person_to_row(item) for item in capped]
+    emails_found = sum(1 for r in rows if r.get("Email Business"))
 
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     with out_csv.open("w", newline="", encoding="utf-8") as fh:
@@ -757,8 +886,8 @@ def cmd_export(limit: int, out_csv: Path, add_to_list: bool) -> int:
 
     print(filter_summary(list_uuids))
     print()
-    print(f"Fetched {raw_count:,} unique leads before 2-per-company cap")
     print(f"Exported after cap: {len(rows):,}")
+    print(f"Emails found: {emails_found:,}")
     print(f"Wrote {out_csv}")
     return 0
 
@@ -768,7 +897,10 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("resolve-lists", help="Resolve workspace list UUIDs by name")
     sub.add_parser("preview", help="Print net-new count and 10 sample leads")
-    export_parser = sub.add_parser("export", help="Export net-new leads (max 2 per company)")
+    export_parser = sub.add_parser(
+        "export",
+        help="Export net-new leads with verified emails (max 2 per company)",
+    )
     export_parser.add_argument(
         "--limit",
         type=int,
@@ -778,13 +910,28 @@ def main() -> int:
     export_parser.add_argument(
         "--output",
         type=Path,
-        default=OUT_CSV_5K,
+        default=OUT_CSV_EMAIL,
         help="Output CSV path",
+    )
+    export_parser.add_argument(
+        "--no-email",
+        action="store_true",
+        help="Profile-only export without email enrichment (not recommended)",
     )
     export_parser.add_argument(
         "--no-add-to-list",
         action="store_true",
         help="Skip appending exported person IDs to API exclude list",
+    )
+    export_parser.add_argument(
+        "--skip-api-exclude",
+        action="store_true",
+        help="Do not exclude prior API export lists (re-enrich same cohort)",
+    )
+    export_parser.add_argument(
+        "--include-no-email",
+        action="store_true",
+        help="Keep rows without a found email (default: email exports omit them)",
     )
     args = parser.parse_args()
 
@@ -797,6 +944,9 @@ def main() -> int:
             limit=args.limit,
             out_csv=args.output,
             add_to_list=not args.no_add_to_list,
+            with_email=not args.no_email,
+            skip_api_exclude=args.skip_api_exclude,
+            email_only=not args.no_email and not args.include_no_email,
         )
     return 1
 
