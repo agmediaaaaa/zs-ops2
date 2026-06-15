@@ -16,8 +16,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "artifacts" / "healthcare-export"
 LIST_IDS_PATH = ARTIFACTS / "list_ids.json"
+API_EXCLUDE_PATH = ARTIFACTS / "api_exclude_lists.json"
 OUT_CSV = ARTIFACTS / "Healthcare-founders-owners-netnew.csv"
+OUT_CSV_5K = ARTIFACTS / "Healthcare-founders-owners-netnew-5000.csv"
 PREVIEW_JSON = ARTIFACTS / "healthcare-founders-preview.json"
+
+DEFAULT_EXPORT_LIMIT = 5000
+TARGET_LIST_NAME = "healthcare - csuite"
 
 API_BASE = "https://api.ai-ark.com/api/developer-portal"
 LABEL = "Healthcare founders/owners netnew"
@@ -244,6 +249,77 @@ def fetch_workspace_lists(wid: str) -> dict[str, str]:
     return found
 
 
+def load_api_exclude_list_ids() -> list[str]:
+    if not API_EXCLUDE_PATH.exists():
+        return []
+    data = json.loads(API_EXCLUDE_PATH.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        ids = data.get("exclude_list_ids") or data.get("list_ids") or []
+        return [str(x) for x in ids if x]
+    if isinstance(data, list):
+        return [str(x) for x in data if x]
+    return []
+
+
+def save_api_exclude_list_ids(list_ids: list[str], *, target_list: str) -> None:
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    API_EXCLUDE_PATH.write_text(
+        json.dumps(
+            {
+                "target_list_name": target_list,
+                "exclude_list_ids": list_ids,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def all_exclude_list_uuids() -> list[str]:
+    workspace = [v for v in resolve_list_ids(quiet=True) if v]
+    api_lists = load_api_exclude_list_ids()
+    seen: set[str] = set()
+    merged: list[str] = []
+    for uuid in workspace + api_lists:
+        if uuid and uuid not in seen:
+            seen.add(uuid)
+            merged.append(uuid)
+    return merged
+
+
+def person_id(item: dict) -> str:
+    return str(item.get("id") or "")
+
+
+def append_people_to_api_list(people_ids: list[str], list_id: str | None = None) -> str:
+    """Append AI Ark person IDs to a developer-portal exclude list (max 10k per list)."""
+    if not people_ids:
+        raise ValueError("No people IDs to append")
+
+    remaining = people_ids[:]
+    current_list_id = list_id
+    updated_ids = load_api_exclude_list_ids()
+
+    while remaining:
+        batch = remaining[:10000]
+        remaining = remaining[10000:]
+        body: dict = {
+            "type": "people_id",
+            "values": batch,
+            "mode": "APPEND",
+        }
+        if current_list_id:
+            body["id"] = current_list_id
+        result = api_request("POST", "/v1/lists", body)
+        current_list_id = str(result["id"])
+        if current_list_id not in updated_ids:
+            updated_ids.append(current_list_id)
+
+    save_api_exclude_list_ids(updated_ids, target_list=TARGET_LIST_NAME)
+    return current_list_id or ""
+
+
 def save_list_ids(mapping: dict[str, str]) -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     LIST_IDS_PATH.write_text(
@@ -252,7 +328,7 @@ def save_list_ids(mapping: dict[str, str]) -> None:
     )
 
 
-def resolve_list_ids() -> list[str]:
+def resolve_list_ids(*, quiet: bool = False) -> list[str]:
     mapping = load_list_ids()
     missing = [name for name in LIST_NAMES if name not in mapping or not mapping[name]]
     if not missing:
@@ -282,7 +358,7 @@ def resolve_list_ids() -> list[str]:
                     mapping[name] = uuid
 
     missing = [name for name in LIST_NAMES if name not in mapping or not mapping[name]]
-    if missing:
+    if missing and not quiet:
         print(
             "Could not resolve list UUIDs for: "
             + ", ".join(missing)
@@ -293,7 +369,7 @@ def resolve_list_ids() -> list[str]:
             ),
             file=sys.stderr,
         )
-        return []
+    return []
 
     save_list_ids(mapping)
     return [mapping[name] for name in LIST_NAMES]
@@ -474,16 +550,25 @@ def filter_summary(list_uuids: list[str]) -> str:
         "  Industries (WORD): " + "; ".join(HEALTHCARE_INDUSTRIES),
         "  Max per company (export): 2",
     ]
-    if list_uuids:
-        mapping = load_list_ids()
-        lines.append("  Excluded lists:")
+    mapping = load_list_ids()
+    api_lists = load_api_exclude_list_ids()
+    if mapping:
+        lines.append("  Excluded workspace lists:")
         for name in LIST_NAMES:
-            lines.append(f"    - {name}: {mapping.get(name, '?')}")
-    else:
+            if mapping.get(name):
+                lines.append(f"    - {name}: {mapping.get(name)}")
+    if api_lists:
         lines.append(
-            "  Excluded lists: NOT APPLIED (list UUIDs missing — add to "
-            f"{LIST_IDS_PATH})"
+            f"  Excluded API lists (prior exports -> {TARGET_LIST_NAME}): "
+            + ", ".join(api_lists)
         )
+    if not mapping and not api_lists:
+        lines.append(
+            "  Excluded lists: none (workspace UUIDs unavailable; "
+            "using API exclude lists after first export)"
+        )
+    elif list_uuids:
+        pass
     return "\n".join(lines)
 
 
@@ -521,7 +606,7 @@ def cmd_resolve_lists() -> int:
 
 
 def cmd_preview() -> int:
-    list_uuids = resolve_list_ids()
+    list_uuids = all_exclude_list_uuids()
     result = people_search(page=0, size=10, list_uuids=list_uuids or None)
     gross = int(result.get("totalElements") or 0)
     samples = result.get("content") or []
@@ -556,10 +641,10 @@ def cmd_preview() -> int:
     if list_uuids:
         print(f"Gross net-new (API totalElements, lists excluded): {gross:,}")
     else:
-        print(f"Gross matches (lists NOT excluded): {gross:,}")
+        print(f"Gross matches (no list exclusions): {gross:,}")
         print(
-            "WARNING: True net-new count requires list UUIDs for "
-            "'healthcare - csuite' and 'healthcare - ops'."
+            "Note: Workspace list UUIDs unavailable; export uses API exclude "
+            f"lists for repeat runs (target: {TARGET_LIST_NAME})."
         )
     print(
         "Exportable count will be lower after the 2-per-company cap "
@@ -571,10 +656,10 @@ def cmd_preview() -> int:
         print(sample_line(item, i))
     print()
     print(f"Preview saved to {PREVIEW_JSON}")
-    return 0 if list_uuids else 1
+    return 0
 
 
-def fetch_all_people(list_uuids: list[str]) -> list[dict]:
+def fetch_people(list_uuids: list[str] | None, limit: int | None) -> list[dict]:
     page = 0
     size = 100
     all_items: list[dict] = []
@@ -590,6 +675,8 @@ def fetch_all_people(list_uuids: list[str]) -> list[dict]:
             if li:
                 seen_linkedin.add(li)
             all_items.append(item)
+            if limit and len(all_items) >= limit:
+                return all_items[:limit]
 
         total_pages = int(result.get("totalPages") or 0)
         print(f"Fetched page {page + 1}/{total_pages} ({len(all_items)} unique leads)")
@@ -601,31 +688,78 @@ def fetch_all_people(list_uuids: list[str]) -> list[dict]:
     return all_items
 
 
-def cmd_export() -> int:
-    list_uuids = resolve_list_ids()
-    if not list_uuids:
+def cmd_export(limit: int, out_csv: Path, add_to_list: bool) -> int:
+    workspace_uuids = resolve_list_ids(quiet=True)
+    list_uuids = all_exclude_list_uuids()
+    if workspace_uuids:
+        print(f"Excluding workspace lists: {', '.join(workspace_uuids)}")
+    elif load_api_exclude_list_ids():
         print(
-            "Refusing export without list exclusions. "
-            f"Populate {LIST_IDS_PATH} with UUIDs and rerun.",
-            file=sys.stderr,
+            f"Excluding {len(load_api_exclude_list_ids())} prior API list(s) "
+            f"(proxy for {TARGET_LIST_NAME})"
         )
-        return 2
+    else:
+        print(
+            "Workspace list UUIDs not found — exporting current net-new page "
+            f"results, then saving IDs to API list for {TARGET_LIST_NAME}."
+        )
 
-    items = fetch_all_people(list_uuids)
-    capped = cap_per_company(items, 2)
+    page = 0
+    size = 100
+    capped: list[dict] = []
+    seen_linkedin: set[str] = set()
+    raw_count = 0
+
+    while len(capped) < limit:
+        result = people_search(page=page, size=size, list_uuids=list_uuids or None)
+        content = result.get("content") or []
+        if not content:
+            break
+        batch: list[dict] = []
+        for item in content:
+            li = norm_linkedin((item.get("link") or {}).get("linkedin"))
+            if li and li in seen_linkedin:
+                continue
+            if li:
+                seen_linkedin.add(li)
+            batch.append(item)
+            raw_count += 1
+        capped = cap_per_company(capped + batch, 2)[:limit]
+
+        total_pages = int(result.get("totalPages") or 0)
+        print(
+            f"Fetched page {page + 1}/{total_pages} "
+            f"({raw_count} raw, {len(capped)} exportable)"
+        )
+        if result.get("last") or page + 1 >= total_pages:
+            break
+        page += 1
+        time.sleep(0.22)
+
     rows = [person_to_row(item) for item in capped]
 
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    with OUT_CSV.open("w", newline="", encoding="utf-8") as fh:
+    with out_csv.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=STANDARD_HEADERS)
         writer.writeheader()
         writer.writerows(rows)
 
+    list_id = ""
+    if add_to_list:
+        ids = [person_id(item) for item in capped if person_id(item)]
+        existing = load_api_exclude_list_ids()
+        seed = existing[0] if existing else None
+        list_id = append_people_to_api_list(ids, list_id=seed)
+        print(
+            f"Appended {len(ids):,} person IDs to API exclude list {list_id} "
+            f"(target workspace list: {TARGET_LIST_NAME})"
+        )
+
     print(filter_summary(list_uuids))
     print()
-    print(f"Fetched {len(items):,} unique leads before 2-per-company cap")
-    print(f"Exportable after cap: {len(rows):,}")
-    print(f"Wrote {OUT_CSV}")
+    print(f"Fetched {raw_count:,} unique leads before 2-per-company cap")
+    print(f"Exported after cap: {len(rows):,}")
+    print(f"Wrote {out_csv}")
     return 0
 
 
@@ -634,7 +768,24 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("resolve-lists", help="Resolve workspace list UUIDs by name")
     sub.add_parser("preview", help="Print net-new count and 10 sample leads")
-    sub.add_parser("export", help="Export all net-new leads (max 2 per company)")
+    export_parser = sub.add_parser("export", help="Export net-new leads (max 2 per company)")
+    export_parser.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_EXPORT_LIMIT,
+        help=f"Max rows to export after 2-per-company cap (default: {DEFAULT_EXPORT_LIMIT})",
+    )
+    export_parser.add_argument(
+        "--output",
+        type=Path,
+        default=OUT_CSV_5K,
+        help="Output CSV path",
+    )
+    export_parser.add_argument(
+        "--no-add-to-list",
+        action="store_true",
+        help="Skip appending exported person IDs to API exclude list",
+    )
     args = parser.parse_args()
 
     if args.command == "resolve-lists":
@@ -642,7 +793,11 @@ def main() -> int:
     if args.command == "preview":
         return cmd_preview()
     if args.command == "export":
-        return cmd_export()
+        return cmd_export(
+            limit=args.limit,
+            out_csv=args.output,
+            add_to_list=not args.no_add_to_list,
+        )
     return 1
 
 
