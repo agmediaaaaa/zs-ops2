@@ -10,12 +10,11 @@
     {
       "variation": "A",
       "name": "A Backlog",
-      "original_angle": "Denied submissions backlog + offshore team",
-      "new_angle": "Money stuck in old denials — dedicated remote team clears it daily",
+      "angle": "Outcome: denied submissions and aging accounts worked daily",
       "paragraphs": [
         "{{first_name}}, most {{custom_company_type}} are leaving money in denied submissions and aging accounts nobody has time to rework.",
-        "We place a dedicated remote team that works through that pile every day so your local staff stops carrying it.",
-        "Worth a short call to see if we could clear yours?",
+        "We work through that backlog every day so it stops sitting on your team's desk.",
+        "Worth a short call?",
         "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
         "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
       ]
@@ -23,11 +22,10 @@
     {
       "variation": "B",
       "name": "B Visibility",
-      "original_angle": "Visibility into untouched denials + offshore teams",
-      "new_angle": "How much is stuck — clear it without another local hire",
+      "angle": "Outcome: clear the pile without stretching current team",
       "paragraphs": [
         "{{first_name}}, honest question — do you know how much is sitting in denied submissions and aging accounts at {{company_name}}?",
-        "We help {{custom_company_type}} clear that workload with dedicated remote staff instead of another local hire.",
+        "We help {{custom_company_type}} clear that pile without your current team taking on more.",
         "Worth a look?",
         "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
         "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
@@ -35,12 +33,11 @@
     },
     {
       "variation": "C",
-      "name": "C Rethinking Admin",
-      "original_angle": "Rethinking admin + offshore for scheduling/intake",
-      "new_angle": "Cut admin overhead — remote staff at half the local labor cost",
+      "name": "C Admin Overhead",
+      "angle": "Outcome: scheduling, intake, follow-up handled at lower labor cost",
       "paragraphs": [
         "{{first_name}}, admin overhead is the hardest line item for most {{custom_company_type}} to keep flat as patient volume grows.",
-        "We move scheduling, intake, credentialing, and account follow-up to dedicated remote staff at roughly half what a local hire costs — same hours, your systems, we handle recruiting and payroll.",
+        "We handle scheduling, intake, credentialing, and account follow-up at roughly half the labor cost of adding someone locally — your processes stay the same.",
         "Want to hear how that works for a practice like yours?",
         "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
         "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
@@ -49,11 +46,10 @@
     {
       "variation": "D",
       "name": "D Stretched Teams",
-      "original_angle": "Stretched internal teams + offshore professionals",
-      "new_angle": "Admin keeps growing, team size doesn't — we take the load",
+      "angle": "Outcome: admin tasks taken off overloaded team",
       "paragraphs": [
         "{{first_name}}, your admin team is probably doing the work of two people.",
-        "We add dedicated remote staff who own scheduling, intake, documentation, and account follow-up so your local team can focus on patients again.",
+        "We take scheduling, intake, documentation, and account follow-up off their plate so they can focus on patients again.",
         "Is that something you're looking at this year?",
         "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
         "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
@@ -61,12 +57,11 @@
     },
     {
       "variation": "E",
-      "name": "E Reframe Local vs Remote",
-      "original_angle": "Default is local hire — offshore alternative",
-      "new_angle": "Skip the local hire — remote staff at half the labor cost",
+      "name": "E Before You Hire",
+      "angle": "Outcome: same admin work covered without another local hire",
       "paragraphs": [
-        "{{first_name}}, when admin work piles up, most {{custom_company_type}} hire another person locally.",
-        "The practices we work with add dedicated remote staff instead and cut admin labor cost by half or more for the same work.",
+        "{{first_name}}, when admin work piles up, most {{custom_company_type}} look at hiring another person locally.",
+        "We handle that same admin workload at roughly half the labor cost — without you posting another job.",
         "Worth a conversation?",
         "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
         "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
@@ -75,12 +70,11 @@
     {
       "variation": "F",
       "name": "F Bandwidth",
-      "original_angle": "Clinical staff bandwidth eaten by admin + offshore teams",
-      "new_angle": "Nurses/front desk shouldn't do paperwork — remote team handles it",
+      "angle": "Outcome: paperwork and scheduling off nurses and front desk",
       "paragraphs": [
         "{{first_name}}, your nurses and front desk shouldn't spend their day on scheduling, credentialing, intake, and paperwork.",
-        "We build dedicated remote teams for {{custom_company_type}} around exactly that work so your onshore team stays focused on patients.",
-        "Curious how other practices are setting this up?",
+        "We take that work off them so they stay focused on patients.",
+        "Curious how other practices are handling it?",
         "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
         "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
       ]
