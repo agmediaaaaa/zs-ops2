@@ -2,9 +2,9 @@
   "subject": "{{first_name}}",
   "workspace": "Healthscope Services",
   "workspace_id": "6a1334c74be1e70c4918deab",
-  "campaign_id": "6a2acf75f0d8168dbe5ee131",
-  "campaign_name": "v2 Basic Outreach",
-  "source": "Fetched live from PlusVibe API — reframed, not deployed",
+  "campaign_id": "6a3128c4bfcb0d66add3f8fd",
+  "campaign_name": "v3 Outcome Outreach",
+  "source": "Deployed to PlusVibe campaign v3 Outcome Outreach (6a3128c4bfcb0d66add3f8fd)",
   "custom_variables_used": ["{{custom_company_type}}", "{{first_name}}", "{{company_name}}"],
   "variations": [
     {

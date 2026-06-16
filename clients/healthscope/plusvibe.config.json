@@ -1,12 +1,10 @@
 {
   "workspace_name": "Healthscope Services",
   "workspace_id": "6a1334c74be1e70c4918deab",
-  "campaign_id": "6a23d05c89340604384ff7fd",
-  "campaign_name": "Basic Outreach",
-  "transfer_dest_campaign_id": "6a2acf75f0d8168dbe5ee131",
-  "template_workspace_id": "69a5b2169433a45c6f6d7d1c",
-  "template_campaign_id": "69fae9c435ed857458d57321",
-  "template_campaign": "v2 SaaS(11-50)-Csuite-Google",
-  "subject_line": "{{first_name}}",
-  "body": ""
+  "campaign_id": "6a3128c4bfcb0d66add3f8fd",
+  "campaign_name": "v3 Outcome Outreach",
+  "source_campaign_id": "6a2acf75f0d8168dbe5ee131",
+  "source_campaign_name": "v2 Basic Outreach",
+  "scripts_file": "clients/healthscope/healthscope-step1-scripts-reframed.json",
+  "subject_line": "{{first_name}}"
 }
