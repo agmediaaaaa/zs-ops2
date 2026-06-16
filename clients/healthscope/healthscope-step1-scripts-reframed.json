@@ -2,100 +2,87 @@
   "subject": "{{first_name}}",
   "workspace": "Healthscope Services",
   "workspace_id": "6a1334c74be1e70c4918deab",
-  "campaign_name": "Basic Outreach",
-  "note": "Reframed from offshore-staffing positioning to outcome-led offers. Not deployed to PlusVibe.",
-  "research_sources": [
-    "https://healthscopeservices.com",
-    "https://healthscopeservices.com/how-it-works/pricing/",
-    "https://healthscopeservices.com/blogs-news/how-much-can-you-save-with-offshore-staffing-in-healthcare/"
-  ],
+  "campaign_id": "6a2acf75f0d8168dbe5ee131",
+  "campaign_name": "v2 Basic Outreach",
+  "source": "Fetched live from PlusVibe API — reframed, not deployed",
+  "custom_variables_used": ["{{custom_company_type}}", "{{first_name}}", "{{company_name}}"],
   "variations": [
     {
       "variation": "A",
-      "name": "Admin overhead reduction",
-      "angle": "Cut back-office labor spend 50-70% without dropping coverage",
+      "name": "A Backlog",
+      "original_angle": "Denied submissions backlog + offshore team",
+      "new_angle": "Money stuck in old denials — dedicated remote team clears it daily",
       "paragraphs": [
-        "{{first_name}},",
-        "most healthcare ops leaders we talk to say back-office labor is one of the hardest costs to keep flat as volume grows.",
-        "A few teams in your space have been replacing onshore admin headcount with dedicated remote FTEs at roughly 50-70% lower all-in cost — same hours, same systems, direct management.",
-        "Not sure if that's on your radar. Open to a short call to hear how you're handling admin overhead at {{company_name}}?"
+        "{{first_name}}, most {{custom_company_type}} are leaving money in denied submissions and aging accounts nobody has time to rework.",
+        "We place a dedicated remote team that works through that pile every day so your local staff stops carrying it.",
+        "Worth a short call to see if we could clear yours?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
       ]
     },
     {
       "variation": "B",
-      "name": "Margin protection",
-      "angle": "Fix the cost side when reimbursement pressure hits",
+      "name": "B Visibility",
+      "original_angle": "Visibility into untouched denials + offshore teams",
+      "new_angle": "How much is stuck — clear it without another local hire",
       "paragraphs": [
-        "{{first_name}},",
-        "when reimbursement or payer rates move against you, most teams can't fix revenue overnight — but they can fix labor on the back office.",
-        "We've seen healthcare operators keep the same patient-facing coverage while cutting regional admin spend by half or more with dedicated remote teams.",
-        "Worth a quick conversation to see if that model fits {{company_name}}?"
+        "{{first_name}}, honest question — do you know how much is sitting in denied submissions and aging accounts at {{company_name}}?",
+        "We help {{custom_company_type}} clear that workload with dedicated remote staff instead of another local hire.",
+        "Worth a look?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
       ]
     },
     {
       "variation": "C",
-      "name": "RCM / denials capacity",
-      "angle": "Clear AR backlog without another US hire",
+      "name": "C Rethinking Admin",
+      "original_angle": "Rethinking admin + offshore for scheduling/intake",
+      "new_angle": "Cut admin overhead — remote staff at half the local labor cost",
       "paragraphs": [
-        "{{first_name}},",
-        "curious how {{company_name}} is handling revenue-cycle volume right now — denials, follow-ups, payer intake, that kind of work.",
-        "A lot of groups we speak with are adding capacity there without another $55-65k regional hire by using dedicated remote staff who already know US healthcare workflows.",
-        "Open to a brief chat?"
+        "{{first_name}}, admin overhead is the hardest line item for most {{custom_company_type}} to keep flat as patient volume grows.",
+        "We move scheduling, intake, credentialing, and account follow-up to dedicated remote staff at roughly half what a local hire costs — same hours, your systems, we handle recruiting and payroll.",
+        "Want to hear how that works for a practice like yours?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
       ]
     },
     {
       "variation": "D",
-      "name": "Cost math",
-      "angle": "Concrete $1,600/mo vs $60k+ regional hire comparison",
+      "name": "D Stretched Teams",
+      "original_angle": "Stretched internal teams + offshore professionals",
+      "new_angle": "Admin keeps growing, team size doesn't — we take the load",
       "paragraphs": [
-        "{{first_name}},",
-        "quick one — back-office roles that run $55-70k all-in regionally often land around $1,600/month as a dedicated full-time remote hire (salary, loads, equipment included).",
-        "That's usually a 50-70% swing on the same function: scheduling, AR follow-up, payer intake, admin support.",
-        "Not sure if you're actively looking at that. Happy to walk through the math for {{company_name}} if useful."
+        "{{first_name}}, your admin team is probably doing the work of two people right now.",
+        "We add dedicated remote staff who own scheduling, intake, documentation, and account follow-up so your local team can focus on patients again.",
+        "Is that something you're looking at this year?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
       ]
     },
     {
       "variation": "E",
-      "name": "Onshore burnout relief",
-      "angle": "Move repetitive admin off your US team's plate",
+      "name": "E Reframe Local vs Remote",
+      "original_angle": "Default is local hire — offshore alternative",
+      "new_angle": "Skip the local hire — remote staff at half the labor cost",
       "paragraphs": [
-        "{{first_name}},",
-        "a pattern we keep hearing from healthcare operators: onshore staff are stuck doing repetitive admin — calls, scheduling, documentation — and patient-facing work suffers.",
-        "Some teams pull that work onto dedicated remote FTEs so the US side stays focused on higher-value work.",
-        "Is that something {{company_name}} is running into, or mostly handled already?"
+        "{{first_name}}, when admin work piles up, most {{custom_company_type}} hire another person locally.",
+        "The practices we work with add dedicated remote staff instead and cut admin labor cost by half or more for the same work.",
+        "Worth a conversation?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
       ]
     },
     {
       "variation": "F",
-      "name": "Low-risk pilot",
-      "angle": "Start with 5-10 people, no deposit, first month no-cost exit",
+      "name": "F Bandwidth",
+      "original_angle": "Clinical staff bandwidth eaten by admin + offshore teams",
+      "new_angle": "Nurses/front desk shouldn't do paperwork — remote team handles it",
       "paragraphs": [
-        "{{first_name}},",
-        "for teams nervous about changing how they staff the back office, the lowest-friction path we've seen is a 5-10 person pilot on one workflow — AR, scheduling, payer intake, whatever hurts most.",
-        "No recruiting fees upfront, month-end invoicing only, and if the first month doesn't work you can walk away without paying.",
-        "Open to a short call to see if a pilot like that would even make sense for {{company_name}}?"
-      ]
-    },
-    {
-      "variation": "G",
-      "name": "Competitive pressure",
-      "angle": "Peers already scaling back office remotely",
-      "paragraphs": [
-        "{{first_name}},",
-        "more DME, RCM, and provider groups are keeping regional headcount lean and pushing repeatable back-office work to dedicated remote teams.",
-        "Main driver is usually margin — same coverage, materially lower labor line.",
-        "Curious whether {{company_name}} is exploring that or planning to keep everything onshore."
-      ]
-    },
-    {
-      "variation": "H",
-      "name": "Hiring difficulty",
-      "angle": "Skip the local talent gap for process-driven roles",
-      "paragraphs": [
-        "{{first_name}},",
-        "when local hiring for back-office roles keeps stalling, some healthcare teams stop waiting on the regional market.",
-        "They build dedicated remote FTEs for process-heavy work — AR, scheduling, intake — at a fraction of a US hire, with HIPAA-trained staff.",
-        "How's local hiring been for those roles at {{company_name}}?"
+        "{{first_name}}, your nurses and front desk shouldn't spend their day on scheduling, credentialing, intake, and paperwork.",
+        "We build dedicated remote teams for {{custom_company_type}} around exactly that work so your onshore team stays focused on patients.",
+        "Curious how other practices are setting this up?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
       ]
     }
   ]
