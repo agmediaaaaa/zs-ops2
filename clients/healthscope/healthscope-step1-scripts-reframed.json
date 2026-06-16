@@ -1,0 +1,102 @@
+{
+  "subject": "{{first_name}}",
+  "workspace": "Healthscope Services",
+  "workspace_id": "6a1334c74be1e70c4918deab",
+  "campaign_name": "Basic Outreach",
+  "note": "Reframed from offshore-staffing positioning to outcome-led offers. Not deployed to PlusVibe.",
+  "research_sources": [
+    "https://healthscopeservices.com",
+    "https://healthscopeservices.com/how-it-works/pricing/",
+    "https://healthscopeservices.com/blogs-news/how-much-can-you-save-with-offshore-staffing-in-healthcare/"
+  ],
+  "variations": [
+    {
+      "variation": "A",
+      "name": "Admin overhead reduction",
+      "angle": "Cut back-office labor spend 50-70% without dropping coverage",
+      "paragraphs": [
+        "{{first_name}},",
+        "most healthcare ops leaders we talk to say back-office labor is one of the hardest costs to keep flat as volume grows.",
+        "A few teams in your space have been replacing onshore admin headcount with dedicated remote FTEs at roughly 50-70% lower all-in cost — same hours, same systems, direct management.",
+        "Not sure if that's on your radar. Open to a short call to hear how you're handling admin overhead at {{company_name}}?"
+      ]
+    },
+    {
+      "variation": "B",
+      "name": "Margin protection",
+      "angle": "Fix the cost side when reimbursement pressure hits",
+      "paragraphs": [
+        "{{first_name}},",
+        "when reimbursement or payer rates move against you, most teams can't fix revenue overnight — but they can fix labor on the back office.",
+        "We've seen healthcare operators keep the same patient-facing coverage while cutting regional admin spend by half or more with dedicated remote teams.",
+        "Worth a quick conversation to see if that model fits {{company_name}}?"
+      ]
+    },
+    {
+      "variation": "C",
+      "name": "RCM / denials capacity",
+      "angle": "Clear AR backlog without another US hire",
+      "paragraphs": [
+        "{{first_name}},",
+        "curious how {{company_name}} is handling revenue-cycle volume right now — denials, follow-ups, payer intake, that kind of work.",
+        "A lot of groups we speak with are adding capacity there without another $55-65k regional hire by using dedicated remote staff who already know US healthcare workflows.",
+        "Open to a brief chat?"
+      ]
+    },
+    {
+      "variation": "D",
+      "name": "Cost math",
+      "angle": "Concrete $1,600/mo vs $60k+ regional hire comparison",
+      "paragraphs": [
+        "{{first_name}},",
+        "quick one — back-office roles that run $55-70k all-in regionally often land around $1,600/month as a dedicated full-time remote hire (salary, loads, equipment included).",
+        "That's usually a 50-70% swing on the same function: scheduling, AR follow-up, payer intake, admin support.",
+        "Not sure if you're actively looking at that. Happy to walk through the math for {{company_name}} if useful."
+      ]
+    },
+    {
+      "variation": "E",
+      "name": "Onshore burnout relief",
+      "angle": "Move repetitive admin off your US team's plate",
+      "paragraphs": [
+        "{{first_name}},",
+        "a pattern we keep hearing from healthcare operators: onshore staff are stuck doing repetitive admin — calls, scheduling, documentation — and patient-facing work suffers.",
+        "Some teams pull that work onto dedicated remote FTEs so the US side stays focused on higher-value work.",
+        "Is that something {{company_name}} is running into, or mostly handled already?"
+      ]
+    },
+    {
+      "variation": "F",
+      "name": "Low-risk pilot",
+      "angle": "Start with 5-10 people, no deposit, first month no-cost exit",
+      "paragraphs": [
+        "{{first_name}},",
+        "for teams nervous about changing how they staff the back office, the lowest-friction path we've seen is a 5-10 person pilot on one workflow — AR, scheduling, payer intake, whatever hurts most.",
+        "No recruiting fees upfront, month-end invoicing only, and if the first month doesn't work you can walk away without paying.",
+        "Open to a short call to see if a pilot like that would even make sense for {{company_name}}?"
+      ]
+    },
+    {
+      "variation": "G",
+      "name": "Competitive pressure",
+      "angle": "Peers already scaling back office remotely",
+      "paragraphs": [
+        "{{first_name}},",
+        "more DME, RCM, and provider groups are keeping regional headcount lean and pushing repeatable back-office work to dedicated remote teams.",
+        "Main driver is usually margin — same coverage, materially lower labor line.",
+        "Curious whether {{company_name}} is exploring that or planning to keep everything onshore."
+      ]
+    },
+    {
+      "variation": "H",
+      "name": "Hiring difficulty",
+      "angle": "Skip the local talent gap for process-driven roles",
+      "paragraphs": [
+        "{{first_name}},",
+        "when local hiring for back-office roles keeps stalling, some healthcare teams stop waiting on the regional market.",
+        "They build dedicated remote FTEs for process-heavy work — AR, scheduling, intake — at a fraction of a US hire, with HIPAA-trained staff.",
+        "How's local hiring been for those roles at {{company_name}}?"
+      ]
+    }
+  ]
+}
