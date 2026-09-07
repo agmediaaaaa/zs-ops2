@@ -2,7 +2,7 @@
 
 Operational response playbook for GWS and MARS inbound replies, aligned with core value propositions, outbound campaign promises, and the 3 inbox management rules.
 
-> **Interactive Canvas:** Open the companion [Inbox Management Canvas](/cursor/stores/user/canvases/ec0040e9-89b5-4b74-bf58-27fb2f5c1506/source.canvas.tsx) beside chat for scenario lookup, rule routing, and copy-ready reply templates.
+> **Interactive Canvas:** Open [Inbox Management GWS and MARS](/cursor/stores/user/canvases/679f6bca-5488-49eb-b761-9bf525733a57/source.canvas.tsx) beside chat for scenario lookup, rule routing, and copy-ready reply templates.
 
 ---
 
