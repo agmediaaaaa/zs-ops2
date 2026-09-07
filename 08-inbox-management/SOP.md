@@ -34,7 +34,7 @@ If a reply creates another email round instead of a **call, a pause, or a clean 
 - `submodules/mars-response-matrix.md`
 
 **Interactive canvas (operator aid, not a substitute for this SOP)**
-- `~/.cursor/projects/Users-aaravgandhi-Cursor-zs-ops-1/canvases/inbox-management-gws-mars.canvas.tsx`
+- [Inbox Management — GWS & MARS](/cursor/stores/user/canvases/f627ef02-ddd2-427d-bd01-119fdb6e5edb/source.canvas.tsx)
 
 ---
 
