@@ -30,6 +30,7 @@ If a reply creates another email round instead of a **call, a pause, or a clean 
 - Rewriting Step 1 / Step 2 sequences (use Agent 5 copy SOPs)
 
 **Companion docs**
+- `SOP-mars.md` — Mars-only operator SOP (self-contained)
 - `submodules/gws-response-matrix.md`
 - `submodules/mars-response-matrix.md`
 
