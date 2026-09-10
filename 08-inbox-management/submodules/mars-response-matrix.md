@@ -1,7 +1,7 @@
 # MARS RESPONSE MATRIX
 ## Skilled-trade & precision manufacturing staffing — workspace `6a8d53c5977bb5537e41fcf2`
 
-Use with `08-inbox-management/SOP.md`. Classification and hygiene live there. This file is **what to send**.
+Use with `08-inbox-management/SOP-mars.md` (Mars-only runbook) or `08-inbox-management/SOP.md` (shared GWS+MARS). This file is the send-template companion; the Mars SOP already includes these templates inline.
 
 ---
 
