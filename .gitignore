@@ -2,6 +2,9 @@
 .env
 .env.local
 
+# Cursor MCP may contain live tokens — commit .cursor/mcp.json.example instead
+.cursor/mcp.json
+
 # Run artifacts (may contain PII / large exports)
 artifacts/
 outputs/
