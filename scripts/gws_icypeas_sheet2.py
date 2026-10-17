@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """GWS Icypeas scrape → budget email ladder → Sheet2 CSV, hard spend cap.
 
-Plan: Icypeas (description+headcount) → hygiene → pattern → ContactOut (best-effort)
-→ MV → QuickEnrich find → Trykitt (catch-all/QE miss) → MV → artifacts + Sheet2 upload.
+Fast path: concurrent pattern+MV across page candidates, then QE/Trykitt only
+for misses. Thread-safe spend gate. No Prospeo; no company enrich stack.
 """
 from __future__ import annotations
 
@@ -12,11 +12,13 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,9 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+TREG_TIMEOUT = 25
+TREG_RETRIES = 3
+DEFAULT_WORKERS = 32
 
 TITLE_INCLUDE = [
     "Owner",
@@ -198,6 +203,12 @@ VALID_MV = {"ok", "valid", "smtp_valid"}
 CATCH_ALL_MV = {"catch_all", "catch_all_valid"}
 TOKEN = ""
 
+# Thread-safe spend accounting
+_spend_lock = threading.Lock()
+_spent_micro = 0
+_cap_micro = 0
+_stop_spend = False
+
 
 def load_treg_token() -> str:
     for name in ("TREG_TOKEN", "treg"):
@@ -219,7 +230,8 @@ def treg(
     body: Any | None = None,
     headers: dict | None = None,
     query: dict | None = None,
-    retries: int = 4,
+    retries: int = TREG_RETRIES,
+    timeout: float = TREG_TIMEOUT,
 ) -> tuple[Any, dict]:
     url = f"{BASE}{path}"
     if query:
@@ -234,7 +246,7 @@ def treg(
     for i in range(retries):
         req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
                 meta = {
                     "status": resp.status,
@@ -249,21 +261,47 @@ def treg(
             err = e.read().decode(errors="replace")
             last = (e.code, err)
             if e.code in (409, 418, 429, 503) or (500 <= e.code < 600):
-                wait = min(4 * (2**i), 45)
+                wait = min(2 * (2**i), 20)
                 if e.code in (418, 429):
-                    wait = max(wait, 8 + 5 * i)
+                    wait = max(wait, 4 + 3 * i)
                 time.sleep(wait)
                 continue
             raise RuntimeError(f"HTTP {e.code}: {err[:800]}") from e
         except Exception as e:
             last = e
-            time.sleep(min(2**i, 6))
+            time.sleep(min(1.5**i, 4))
     raise RuntimeError(f"treg failed after retries: {last}")
 
 
 def balance_usd() -> float:
     data, _ = treg("GET", "/orgs/33605/balance")
     return float((data or {}).get("balance_usd") or 0)
+
+
+def spent_usd() -> float:
+    with _spend_lock:
+        return _spent_micro / 1_000_000
+
+
+def under_cap(need_micro: int = 0) -> bool:
+    global _stop_spend
+    with _spend_lock:
+        if _stop_spend:
+            return False
+        ok = _spent_micro + need_micro < _cap_micro
+        if not ok:
+            _stop_spend = True
+        return ok
+
+
+def charge(cost_micro: int) -> None:
+    global _spent_micro, _stop_spend
+    if cost_micro <= 0:
+        return
+    with _spend_lock:
+        _spent_micro += cost_micro
+        if _spent_micro >= _cap_micro:
+            _stop_spend = True
 
 
 def normalize_linkedin(url: str) -> str:
@@ -286,12 +324,10 @@ def title_ok(title: str, company_name: str) -> bool:
     t = (title or "").strip()
     if not t or not TITLE_ALLOW_RE.search(t):
         return False
-    # Drop pure deny roles unless also owner/founder/ceo
     if TITLE_DENY_RE.search(t) and not re.search(
         r"\b(owner|founder|ceo|chief\s*executive|managing\s*partner)\b", t, re.I
     ):
         return False
-    # Co-op / unclear ownership: bare President only
     cn = (company_name or "").lower()
     if re.search(r"\bco-?op\b|\bcooperative\b", cn) and re.search(
         r"^\s*president\s*$", t, re.I
@@ -422,51 +458,25 @@ def load_file_set(path: Path) -> set[str]:
     return {ln.strip().lower() for ln in path.read_text().splitlines() if ln.strip()}
 
 
-def supabase_key() -> str:
-    for name in ("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_KEY"):
-        v = os.environ.get(name, "").strip()
-        if v:
-            return v
-    return ""
-
-
-def verify_contactout(email: str) -> tuple[str, int]:
-    try:
-        data, meta = treg(
-            "GET",
-            "/call/contactout.people.email.verify",
-            query={"email": email},
-        )
-        status = ""
-        if isinstance(data, dict):
-            status = (
-                data.get("status")
-                or data.get("result")
-                or data.get("deliverable")
-                or ""
-            )
-            if isinstance(status, bool):
-                status = "valid" if status else "invalid"
-            status = str(status).lower()
-        return status, int(meta.get("cost_micro") or 0)
-    except Exception as e:
-        print(f"contactout_skip {email}: {e}", flush=True)
-        return "error", 0
-
-
 def verify_mv(email: str) -> tuple[str, int]:
+    if not under_cap(2000):
+        return "stopped", 0
     data, meta = treg(
         "GET",
         "/call/millionverifier.people.email.verify",
         query={"email": email},
     )
+    cost = int(meta.get("cost_micro") or 0)
+    charge(cost)
     result = ""
     if isinstance(data, dict):
         result = (data.get("result") or data.get("quality") or "").lower()
-    return result, int(meta.get("cost_micro") or 0)
+    return result, cost
 
 
 def find_quickenrich(first: str, last: str, domain: str, linkedin: str) -> tuple[str, int]:
+    if not under_cap(6000):
+        return "", 0
     query: dict[str, str] = {
         "first_name": first,
         "last_name": last,
@@ -479,6 +489,8 @@ def find_quickenrich(first: str, last: str, domain: str, linkedin: str) -> tuple
     data, meta = treg(
         "GET", "/call/quickenrich.people.email.find", query=query
     )
+    cost = int(meta.get("cost_micro") or 0)
+    charge(cost)
     email = ""
     if isinstance(data, dict):
         email = data.get("email") or ""
@@ -488,22 +500,26 @@ def find_quickenrich(first: str, last: str, domain: str, linkedin: str) -> tuple
             email = data["data"][0].get("email") or ""
     if (email or "").lower() in ("", "null", "none", "n/a"):
         email = ""
-    return email.strip(), int(meta.get("cost_micro") or 0)
+    return email.strip(), cost
 
 
 def find_trykitt(first: str, last: str, domain: str) -> tuple[str, int]:
+    if not under_cap(7000):
+        return "", 0
     full = f"{first} {last}".strip()
     data, meta = treg(
         "POST",
         "/call/trykitt.people.email.find",
         {"domain": domain, "fullName": full, "realtime": True},
     )
+    cost = int(meta.get("cost_micro") or 0)
+    charge(cost)
     email = ""
     if isinstance(data, dict):
         email = data.get("email") or ""
     if (email or "").lower() in ("", "no-results-found", "none", "null"):
         email = ""
-    return email.strip(), int(meta.get("cost_micro") or 0)
+    return email.strip(), cost
 
 
 def parse_lead(raw: dict) -> dict[str, Any]:
@@ -519,9 +535,6 @@ def parse_lead(raw: dict) -> dict[str, Any]:
     desc = (raw.get("lastCompanyDescription") or "").strip()
     industry = (raw.get("lastCompanyIndustry") or "").strip()
     domain = domain_of(website)
-    if not domain and "@" not in company:
-        # sometimes website is a LI jobs URL — try nothing
-        pass
     return {
         "first_name": first,
         "last_name": last,
@@ -539,28 +552,30 @@ def parse_lead(raw: dict) -> dict[str, Any]:
     }
 
 
+READY_COLS = [
+    "campaign_id",
+    "first_name",
+    "last_name",
+    "title",
+    "email",
+    "email_status",
+    "email_source",
+    "linkedin_url",
+    "company_name",
+    "website",
+    "company_linkedin",
+    "location",
+    "employee_count",
+    "company_description",
+    "industry",
+    "batch_id",
+    "spent_note",
+]
+
+
 def write_ready_csv(path: Path, rows: list[dict]) -> None:
-    cols = [
-        "campaign_id",
-        "first_name",
-        "last_name",
-        "title",
-        "email",
-        "email_status",
-        "email_source",
-        "linkedin_url",
-        "company_name",
-        "website",
-        "company_linkedin",
-        "location",
-        "employee_count",
-        "company_description",
-        "industry",
-        "batch_id",
-        "spent_note",
-    ]
     with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+        w = csv.DictWriter(f, fieldnames=READY_COLS, extrasaction="ignore")
         w.writeheader()
         for r in rows:
             w.writerow(
@@ -572,7 +587,7 @@ def write_ready_csv(path: Path, rows: list[dict]) -> None:
                     "email": r.get("email"),
                     "email_status": r.get("email_status"),
                     "email_source": r.get("email_source"),
-                    "linkedin_url": r.get("linkedin"),
+                    "linkedin_url": r.get("linkedin") or r.get("linkedin_url"),
                     "company_name": r.get("company_name"),
                     "website": r.get("website") or r.get("domain"),
                     "company_linkedin": r.get("company_linkedin"),
@@ -586,19 +601,195 @@ def write_ready_csv(path: Path, rows: list[dict]) -> None:
             )
 
 
-def run(confirm_spend: float) -> dict:
+def load_ready_csv(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    rows: list[dict] = []
+    with path.open(newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            row = dict(r)
+            row["linkedin"] = row.get("linkedin_url") or row.get("linkedin") or ""
+            row["domain"] = domain_of(row.get("website") or "")
+            rows.append(row)
+    return rows
+
+
+def resolve_email_fast(lead: dict, excl_emails: set[str]) -> dict:
+    """Pattern+MV first; QE/Trykitt only on miss. Charges via thread-safe gate."""
+    d = lead["domain"]
+    email = ""
+    email_source = ""
+    email_status = ""
+    cost_here = 0
+
+    if not under_cap(2000):
+        return {
+            "email": None,
+            "email_status": None,
+            "email_source": None,
+            "spent_note": "0",
+            "plusvibe_ready": False,
+            "stopped": True,
+        }
+
+    # Fast path: first pattern + MV
+    for guess in pattern_emails(lead["first_name"], lead["last_name"], d)[:1]:
+        if guess.lower() in excl_emails:
+            continue
+        try:
+            mv, mcost = verify_mv(guess)
+            cost_here += mcost
+            if mv == "stopped":
+                break
+            if mv in VALID_MV:
+                email, email_source, email_status = guess, "pattern+mv", mv
+                break
+            if mv in CATCH_ALL_MV:
+                email, email_source, email_status = guess, "pattern+catch_all", mv
+                break
+        except Exception as e:
+            print(f"mv_err {guess}: {e}", flush=True)
+
+    # QuickEnrich on miss / non-ok
+    if (not email or email_status not in VALID_MV) and under_cap(6000):
+        try:
+            qe_email, qcost = find_quickenrich(
+                lead["first_name"],
+                lead["last_name"],
+                d,
+                lead["linkedin"],
+            )
+            cost_here += qcost
+            if qe_email and qe_email.lower() not in excl_emails:
+                mv, mcost = verify_mv(qe_email)
+                cost_here += mcost
+                if mv in VALID_MV or (
+                    mv in CATCH_ALL_MV and email_status not in VALID_MV
+                ):
+                    email, email_source, email_status = (
+                        qe_email,
+                        "quickenrich+mv",
+                        mv,
+                    )
+        except Exception as e:
+            print(f"qe_err {d}: {e}", flush=True)
+
+    # Trykitt for catch-all / still missing
+    need_tk = (not email) or (email_status in CATCH_ALL_MV)
+    if need_tk and under_cap(7000):
+        try:
+            tk_email, tcost = find_trykitt(
+                lead["first_name"], lead["last_name"], d
+            )
+            cost_here += tcost
+            if tk_email and tk_email.lower() not in excl_emails:
+                mv, mcost = verify_mv(tk_email)
+                cost_here += mcost
+                if mv in VALID_MV or mv in CATCH_ALL_MV or mv == "":
+                    email = tk_email
+                    email_source = "trykitt+mv"
+                    email_status = mv or "trykitt"
+        except Exception as e:
+            print(f"tk_err {d}: {e}", flush=True)
+
+    ready = bool(
+        email
+        and email.lower() not in excl_emails
+        and (
+            email_status in VALID_MV
+            or email_status in CATCH_ALL_MV
+            or (email_source or "").startswith("trykitt")
+        )
+    )
+    if email_status in CATCH_ALL_MV and not (email_source or "").startswith("trykitt"):
+        ready = False
+
+    return {
+        "email": email or None,
+        "email_status": email_status or None,
+        "email_source": email_source or None,
+        "spent_note": f"{cost_here/1e6:.4f}",
+        "plusvibe_ready": ready,
+        "stopped": False,
+    }
+
+
+def process_candidates_parallel(
+    candidates: list[dict],
+    excl_emails: set[str],
+    workers: int,
+) -> list[tuple[dict, dict]]:
+    """Resolve emails for a page of candidates concurrently."""
+    results: list[tuple[dict, dict]] = []
+    if not candidates:
+        return results
+    n = min(workers, max(1, len(candidates)))
+    with ThreadPoolExecutor(max_workers=n) as pool:
+        futs = {
+            pool.submit(resolve_email_fast, lead, excl_emails): lead
+            for lead in candidates
+        }
+        for fut in as_completed(futs):
+            lead = futs[fut]
+            try:
+                res = fut.result()
+            except Exception as e:
+                print(f"resolve_err {lead.get('domain')}: {e}", flush=True)
+                res = {
+                    "email": None,
+                    "email_status": None,
+                    "email_source": None,
+                    "spent_note": "0",
+                    "plusvibe_ready": False,
+                    "stopped": False,
+                }
+            results.append((lead, res))
+    return results
+
+
+def run(
+    confirm_spend: float,
+    resume_csv: str | None = None,
+    workers: int = DEFAULT_WORKERS,
+    skip_counts: bool = False,
+) -> dict:
+    global _spent_micro, _cap_micro, _stop_spend
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     start_bal = balance_usd()
     effective_cap = min(confirm_spend, start_bal)
-    cap_micro = int(effective_cap * 1_000_000)
-    spent_micro = 0
-    batch_id = (
-        f"gws-icypeas-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-"
-        f"{uuid.uuid4().hex[:8]}"
-    )
+    _cap_micro = int(effective_cap * 1_000_000)
+    _spent_micro = 0
+    _stop_spend = False
+    t0 = time.time()
+
+    prior_rows: list[dict] = []
+    batch_id = ""
+    if resume_csv:
+        prior_path = Path(resume_csv)
+        prior_rows = load_ready_csv(prior_path)
+        # Keep batch id from prior file name when possible
+        m = re.search(r"(gws-icypeas-[^/_]+)_ready", prior_path.name)
+        batch_id = m.group(1) if m else (
+            prior_rows[0].get("batch_id") if prior_rows else ""
+        )
+        if not batch_id:
+            batch_id = (
+                f"gws-icypeas-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-"
+                f"{uuid.uuid4().hex[:8]}"
+            )
+        print(
+            f"RESUME from {prior_path} prior_ready={len(prior_rows)} batch={batch_id}",
+            flush=True,
+        )
+    else:
+        batch_id = (
+            f"gws-icypeas-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-"
+            f"{uuid.uuid4().hex[:8]}"
+        )
+
     print(
         f"start_balance=${start_bal:.4f} confirm=${confirm_spend} "
-        f"effective_cap=${effective_cap:.4f} batch={batch_id}",
+        f"effective_cap=${effective_cap:.4f} batch={batch_id} workers={workers}",
         flush=True,
     )
 
@@ -611,55 +802,81 @@ def run(confirm_spend: float) -> dict:
             excl_li.add(e[3:])
         else:
             excl_emails.add(e)
+
+    # Suppress prior ready leads (don't re-pay)
+    for r in prior_rows:
+        em = (r.get("email") or "").strip().lower()
+        if em:
+            excl_emails.add(em)
+        d = domain_of(r.get("website") or r.get("domain") or "")
+        if d:
+            excl_domains.add(d)
+        li = normalize_linkedin(r.get("linkedin") or r.get("linkedin_url") or "")
+        if li:
+            excl_li.add(li)
+
     print(
         f"excludes emails={len(excl_emails)} domains={len(excl_domains)} li={len(excl_li)}",
         flush=True,
     )
 
-    # Free count each campaign/band
-    for camp in CAMPAIGNS:
-        for band in camp["bands"]:
-            try:
-                c = free_count(camp, band)
-            except Exception as e:
-                c = -1
-                print(f"count_err {camp['id']} {band}: {e}", flush=True)
-            print(f"COUNT {camp['id']} {band[0]}-{band[1]} total={c}", flush=True)
-            time.sleep(0.05)
+    if not skip_counts:
+        for camp in CAMPAIGNS:
+            for band in camp["bands"]:
+                try:
+                    c = free_count(camp, band)
+                except Exception as e:
+                    c = -1
+                    print(f"count_err {camp['id']} {band}: {e}", flush=True)
+                print(f"COUNT {camp['id']} {band[0]}-{band[1]} total={c}", flush=True)
+                time.sleep(0.02)
 
-    # Round-robin state
     state: dict[str, Any] = {}
     for camp in CAMPAIGNS:
+        prior_ready = sum(1 for r in prior_rows if r.get("campaign_id") == camp["id"])
         state[camp["id"]] = {
             "camp": camp,
             "band_i": 0,
             "token": None,
             "exhausted": False,
-            "ready": 0,
+            "ready": prior_ready,
             "searched": 0,
             "skipped": 0,
             "spent_usd": 0.0,
             "pages": 0,
+            "prior_ready": prior_ready,
         }
 
-    ready_rows: list[dict] = []
+    ready_rows: list[dict] = list(prior_rows)
     all_found: list[dict] = []
     seen_domains: set[str] = set(excl_domains)
     seen_people: set[str] = set()
+    for r in prior_rows:
+        li = normalize_linkedin(r.get("linkedin") or "")
+        if li:
+            seen_people.add(li)
+        pk = f"{r.get('first_name')}|{r.get('last_name')}|{domain_of(r.get('website') or '')}"
+        seen_people.add(pk)
     domain_best: dict[str, dict] = {}
+    csv_lock = threading.Lock()
+    ready_csv_path = OUT_DIR / f"{batch_id}_ready.csv"
+    new_ready_this_run = 0
 
-    def under_cap(need_micro: int = 0) -> bool:
-        return spent_micro + need_micro < cap_micro
+    def flush_ready() -> None:
+        with csv_lock:
+            write_ready_csv(ready_csv_path, ready_rows)
+
+    flush_ready()
 
     stop = False
     idle_rounds = 0
-    while not stop and idle_rounds < 3:
+    while not stop and idle_rounds < 3 and under_cap(500):
         progress = False
         for camp in CAMPAIGNS:
             st = state[camp["id"]]
             if st["exhausted"] or st["ready"] >= camp["soft_ready"]:
                 continue
-            if not under_cap(500):  # leave tiny buffer
+            if not under_cap(500):
                 stop = True
                 print("STOP: spend cap", flush=True)
                 break
@@ -676,17 +893,18 @@ def run(confirm_spend: float) -> dict:
                     st["exhausted"] = True
                 continue
             cost = int(meta.get("cost_micro") or 0)
-            spent_micro += cost
+            charge(cost)
             st["spent_usd"] += cost / 1_000_000
             leads = (data or {}).get("leads") or []
             st["pages"] += 1
             progress = True
             print(
                 f"PAGE {camp['id']} band={band[0]}-{band[1]} n={len(leads)} "
-                f"cost_micro={cost} spent=${spent_micro/1e6:.4f}",
+                f"cost_micro={cost} spent=${spent_usd():.4f} "
+                f"ready_total={len(ready_rows)} t={time.time()-t0:.0f}s",
                 flush=True,
             )
-            # collect candidates then email
+
             candidates: list[dict] = []
             for raw in leads:
                 lead = parse_lead(raw)
@@ -704,7 +922,6 @@ def run(confirm_spend: float) -> dict:
                 if lead["employee_count"] in (None, ""):
                     st["skipped"] += 1
                     continue
-                # description required by plan
                 if not lead["company_description"]:
                     st["skipped"] += 1
                     continue
@@ -716,136 +933,69 @@ def run(confirm_spend: float) -> dict:
                 if d in seen_domains and d not in domain_best:
                     st["skipped"] += 1
                     continue
-                # one DM per domain — keep best title
                 if d in domain_best:
-                    if title_rank(lead["title"]) >= title_rank(
-                        domain_best[d]["title"]
-                    ):
+                    if title_rank(lead["title"]) >= title_rank(domain_best[d]["title"]):
                         st["skipped"] += 1
                         continue
                 domain_best[d] = lead
                 candidates.append(lead)
 
-            for lead in candidates:
-                if st["ready"] >= camp["soft_ready"] or not under_cap(2000):
-                    break
-                d = lead["domain"]
-                st["searched"] += 1
-                email = ""
-                email_source = ""
-                email_status = ""
-                cost_here = 0
+            # Cap candidates by remaining soft goal room to avoid overspend
+            room = camp["soft_ready"] - st["ready"]
+            if room <= 0:
+                candidates = []
+            # Process all hygiene-passed candidates in parallel (spend gate stops paid calls)
+            st["searched"] += len(candidates)
+            print(
+                f"  EMAIL {camp['id']} candidates={len(candidates)} workers={workers}",
+                flush=True,
+            )
+            resolved = process_candidates_parallel(candidates, excl_emails, workers)
 
-                # Fast path: 1 pattern + MV, then paid find. ContactOut skipped (slow/limits).
-                for guess in pattern_emails(
-                    lead["first_name"], lead["last_name"], d
-                )[:1]:
-                    if guess.lower() in excl_emails:
-                        continue
-                    if not under_cap(2000):
-                        break
-                    mv, mcost = verify_mv(guess)
-                    cost_here += mcost
-                    spent_micro += mcost
-                    if mv in VALID_MV:
-                        email, email_source, email_status = guess, "pattern+mv", mv
-                        break
-                    if mv in CATCH_ALL_MV:
-                        email, email_source, email_status = (
-                            guess,
-                            "pattern+catch_all",
-                            mv,
-                        )
-                        break
-
-                # QuickEnrich on miss / non-ok
-                if (not email or email_status not in VALID_MV) and under_cap(6000):
-                    try:
-                        qe_email, qcost = find_quickenrich(
-                            lead["first_name"],
-                            lead["last_name"],
-                            d,
-                            lead["linkedin"],
-                        )
-                        cost_here += qcost
-                        spent_micro += qcost
-                        if qe_email and qe_email.lower() not in excl_emails:
-                            mv, mcost = verify_mv(qe_email)
-                            cost_here += mcost
-                            spent_micro += mcost
-                            if mv in VALID_MV or (
-                                mv in CATCH_ALL_MV and email_status not in VALID_MV
-                            ):
-                                email, email_source, email_status = (
-                                    qe_email,
-                                    "quickenrich+mv",
-                                    mv,
-                                )
-                    except Exception as e:
-                        print(f"qe_err {d}: {e}", flush=True)
-
-                # Trykitt for catch-all / still missing
-                need_tk = (not email) or (email_status in CATCH_ALL_MV)
-                if need_tk and under_cap(7000):
-                    try:
-                        tk_email, tcost = find_trykitt(
-                            lead["first_name"], lead["last_name"], d
-                        )
-                        cost_here += tcost
-                        spent_micro += tcost
-                        if tk_email and tk_email.lower() not in excl_emails:
-                            # Trykitt find is pre-verified; still MV stamp
-                            mv, mcost = verify_mv(tk_email)
-                            cost_here += mcost
-                            spent_micro += mcost
-                            if mv in VALID_MV or mv in CATCH_ALL_MV or mv == "":
-                                # accept trykitt hit; prefer MV ok
-                                email = tk_email
-                                email_source = "trykitt+mv"
-                                email_status = mv or "trykitt"
-                    except Exception as e:
-                        print(f"tk_err {d}: {e}", flush=True)
-
-                ready = bool(
-                    email
-                    and email.lower() not in excl_emails
-                    and (
-                        email_status in VALID_MV
-                        or email_status in CATCH_ALL_MV
-                        or email_source.startswith("trykitt")
-                    )
-                )
-                # Prefer only MV ok for "ready" sendable; allow catch_all if trykitt
-                if email_status in CATCH_ALL_MV and not email_source.startswith(
-                    "trykitt"
-                ):
-                    ready = False
-
+            # Apply results serially for domain/email uniqueness
+            page_ready = 0
+            for lead, res in resolved:
+                if res.get("stopped"):
+                    stop = True
                 row = {
                     **lead,
                     "campaign_id": camp["id"],
                     "offer": camp["offer"],
-                    "email": email or None,
-                    "email_status": email_status or None,
-                    "email_source": email_source or None,
+                    "email": res.get("email"),
+                    "email_status": res.get("email_status"),
+                    "email_source": res.get("email_source"),
                     "batch_id": batch_id,
-                    "plusvibe_ready": ready,
-                    "spent_note": f"{cost_here/1e6:.4f}",
+                    "plusvibe_ready": res.get("plusvibe_ready"),
+                    "spent_note": res.get("spent_note"),
                 }
                 all_found.append(row)
-                st["spent_usd"] += cost_here / 1_000_000
-                if ready:
-                    seen_domains.add(d)
-                    excl_emails.add(email.lower())
-                    st["ready"] += 1
-                    ready_rows.append(row)
-                    # incremental flush so kills don't lose progress
-                    write_ready_csv(OUT_DIR / f"{batch_id}_ready.csv", ready_rows)
-                    print(
-                        f"  READY {camp['id']} {st['ready']}/{camp['soft_ready']} "
-                        f"{email} {lead['company_name'][:40]} spent=${spent_micro/1e6:.4f}",
-                        flush=True,
-                    )
+                try:
+                    st["spent_usd"] += float(res.get("spent_note") or 0)
+                except ValueError:
+                    pass
+                if not res.get("plusvibe_ready"):
+                    continue
+                d = lead["domain"]
+                em = (res.get("email") or "").lower()
+                if d in seen_domains or em in excl_emails:
+                    continue
+                if st["ready"] >= camp["soft_ready"]:
+                    continue
+                seen_domains.add(d)
+                excl_emails.add(em)
+                st["ready"] += 1
+                page_ready += 1
+                new_ready_this_run += 1
+                ready_rows.append(row)
+                print(
+                    f"  READY {camp['id']} {st['ready']}/{camp['soft_ready']} "
+                    f"{em} {lead['company_name'][:40]} spent=${spent_usd():.4f} "
+                    f"rate={new_ready_this_run/max(time.time()-t0,1)*60:.1f}/min",
+                    flush=True,
+                )
+
+            if page_ready:
+                flush_ready()
 
             nxt = ((data or {}).get("pagination") or {}).get("token")
             if not leads or not nxt:
@@ -857,18 +1007,24 @@ def run(confirm_spend: float) -> dict:
             else:
                 st["token"] = nxt
 
-            if spent_micro >= cap_micro:
+            if not under_cap(500):
                 stop = True
+                print("STOP: spend cap after page", flush=True)
                 break
 
         if not progress:
             idle_rounds += 1
         else:
             idle_rounds = 0
-        if all(state[c["id"]]["exhausted"] or state[c["id"]]["ready"] >= c["soft_ready"] for c in CAMPAIGNS):
+        if all(
+            state[c["id"]]["exhausted"] or state[c["id"]]["ready"] >= c["soft_ready"]
+            for c in CAMPAIGNS
+        ):
             break
 
+    elapsed = time.time() - t0
     end_bal = balance_usd()
+    throughput = new_ready_this_run / max(elapsed / 60.0, 0.001)
     stats = {
         "batch_id": batch_id,
         "sheet_id": SHEET_ID,
@@ -876,13 +1032,19 @@ def run(confirm_spend: float) -> dict:
         "effective_cap_usd": effective_cap,
         "start_balance_usd": start_bal,
         "end_balance_usd": end_bal,
-        "spent_usd": round(spent_micro / 1_000_000, 6),
+        "spent_usd": round(spent_usd(), 6),
         "spent_from_balance_usd": round(start_bal - end_bal, 6),
         "ready_total": len(ready_rows),
+        "ready_prior": len(prior_rows),
+        "ready_new": new_ready_this_run,
         "found_total": len(all_found),
+        "elapsed_sec": round(elapsed, 1),
+        "throughput_ready_per_min": round(throughput, 2),
+        "workers": workers,
         "campaigns": {
             cid: {
                 "ready": state[cid]["ready"],
+                "prior_ready": state[cid]["prior_ready"],
                 "searched": state[cid]["searched"],
                 "skipped": state[cid]["skipped"],
                 "spent_usd": round(state[cid]["spent_usd"], 6),
@@ -895,14 +1057,15 @@ def run(confirm_spend: float) -> dict:
         "db_order": ["icypeas.people.search"],
         "email_order": [
             "pattern",
-            "contactout.people.email.verify",
             "millionverifier.people.email.verify",
             "quickenrich.people.email.find",
             "trykitt.people.email.find",
         ],
+        "fast_mode": True,
+        "contactout_skipped": True,
     }
-    ready_csv = OUT_DIR / f"{batch_id}_ready.csv"
-    all_csv = OUT_DIR / f"{batch_id}_all.csv"
+    ready_csv = ready_csv_path
+    all_csv = OUT_DIR / f"{batch_id}_all_fast.csv"
     write_ready_csv(ready_csv, ready_rows)
     write_ready_csv(all_csv, all_found)
     summary = OUT_DIR / f"{batch_id}_summary.json"
@@ -920,9 +1083,17 @@ def main() -> None:
     global TOKEN
     p = argparse.ArgumentParser()
     p.add_argument("--confirm-spend", type=float, required=True)
+    p.add_argument("--resume-csv", type=str, default="")
+    p.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    p.add_argument("--skip-counts", action="store_true")
     args = p.parse_args()
     TOKEN = load_treg_token()
-    run(args.confirm_spend)
+    run(
+        args.confirm_spend,
+        resume_csv=args.resume_csv or None,
+        workers=args.workers,
+        skip_counts=args.skip_counts,
+    )
 
 
 if __name__ == "__main__":
