@@ -201,7 +201,11 @@ CAMPAIGNS: list[dict[str, Any]] = [
 
 VALID_MV = {"ok", "valid", "smtp_valid"}
 CATCH_ALL_MV = {"catch_all", "catch_all_valid"}
+# ContactOut free verifier statuses
+VALID_CO = {"valid", "ok", "deliverable", "smtp_valid", "good"}
+CATCH_ALL_CO = {"accept_all", "catch_all", "catchall", "accept-all"}
 TOKEN = ""
+CHEAP_MODE = False
 
 # Thread-safe spend accounting
 _spend_lock = threading.Lock()
@@ -474,6 +478,54 @@ def verify_mv(email: str) -> tuple[str, int]:
     return result, cost
 
 
+def verify_contactout(email: str) -> tuple[str, int]:
+    """Free ContactOut verify. Returns normalized status."""
+    data, meta = treg(
+        "GET",
+        "/call/contactout.people.email.verify",
+        query={"email": email},
+        timeout=20,
+        retries=2,
+    )
+    cost = int(meta.get("cost_micro") or 0)
+    charge(cost)
+    status = ""
+    if isinstance(data, dict):
+        inner = data.get("data") if isinstance(data.get("data"), dict) else data
+        status = str(
+            (inner or {}).get("status")
+            or (inner or {}).get("result")
+            or data.get("status")
+            or ""
+        ).lower()
+    return status, cost
+
+
+def find_blitz(linkedin: str) -> tuple[str, int]:
+    """Cheapest paid find (~$0.0005/hit). Requires LinkedIn URL."""
+    if not linkedin or not under_cap(1000):
+        return "", 0
+    li = linkedin if linkedin.startswith("http") else f"https://{linkedin}"
+    data, meta = treg(
+        "POST",
+        "/call/blitzapi.people.email.find",
+        {"person_linkedin_url": li},
+        headers={"X-Treg-Route-Exclude": "aiark"},
+        timeout=30,
+        retries=2,
+    )
+    cost = int(meta.get("cost_micro") or 0)
+    charge(cost)
+    email = ""
+    if isinstance(data, dict):
+        email = data.get("email") or ""
+        if not email and isinstance(data.get("all_emails"), list) and data["all_emails"]:
+            email = (data["all_emails"][0] or {}).get("email") or ""
+    if (email or "").lower() in ("", "null", "none", "n/a"):
+        email = ""
+    return email.strip(), cost
+
+
 def find_quickenrich(first: str, last: str, domain: str, linkedin: str) -> tuple[str, int]:
     if not under_cap(6000):
         return "", 0
@@ -614,8 +666,72 @@ def load_ready_csv(path: Path) -> list[dict]:
     return rows
 
 
+def resolve_email_cheap(lead: dict, excl_emails: set[str]) -> dict:
+    """Min-credit ladder: pattern → free ContactOut → Blitz. No MV/QE/Trykitt."""
+    d = lead["domain"]
+    email = ""
+    email_source = ""
+    email_status = ""
+    cost_here = 0
+
+    if not under_cap(500):
+        return {
+            "email": None,
+            "email_status": None,
+            "email_source": None,
+            "spent_note": "0",
+            "plusvibe_ready": False,
+            "stopped": True,
+        }
+
+    for guess in pattern_emails(lead["first_name"], lead["last_name"], d)[:1]:
+        if guess.lower() in excl_emails:
+            continue
+        try:
+            st, ccost = verify_contactout(guess)
+            cost_here += ccost
+            if st in VALID_CO:
+                email, email_source, email_status = guess, "pattern+contactout", st
+                break
+            if st in CATCH_ALL_CO:
+                # don't accept catch-all from pattern; escalate to Blitz
+                email_status = st
+        except Exception as e:
+            print(f"co_err {guess}: {e}", flush=True)
+
+    if (not email or email_status not in VALID_CO) and lead.get("linkedin"):
+        try:
+            b_email, bcost = find_blitz(lead["linkedin"])
+            cost_here += bcost
+            if b_email and b_email.lower() not in excl_emails:
+                email, email_source, email_status = b_email, "blitz", "blitz"
+        except Exception as e:
+            print(f"blitz_err {d}: {e}", flush=True)
+
+    ready = bool(
+        email
+        and email.lower() not in excl_emails
+        and (
+            email_status in VALID_CO
+            or email_source == "blitz"
+            or (email_source or "").startswith("pattern+contactout")
+        )
+    )
+    return {
+        "email": email or None,
+        "email_status": email_status or None,
+        "email_source": email_source or None,
+        "spent_note": f"{cost_here/1e6:.4f}",
+        "plusvibe_ready": ready,
+        "stopped": False,
+    }
+
+
 def resolve_email_fast(lead: dict, excl_emails: set[str]) -> dict:
     """Pattern+MV first; QE/Trykitt only on miss. Charges via thread-safe gate."""
+    if CHEAP_MODE:
+        return resolve_email_cheap(lead, excl_emails)
+
     d = lead["domain"]
     email = ""
     email_source = ""
@@ -747,13 +863,30 @@ def process_candidates_parallel(
     return results
 
 
+def scale_soft_goals(target_ready: int) -> None:
+    """Scale campaign soft_ready to sum to target_ready (proportional to current)."""
+    total = sum(int(c["soft_ready"]) for c in CAMPAIGNS) or 1
+    allocated = 0
+    for i, camp in enumerate(CAMPAIGNS):
+        if i == len(CAMPAIGNS) - 1:
+            camp["soft_ready"] = max(1, target_ready - allocated)
+        else:
+            n = max(1, round(target_ready * int(camp["soft_ready"]) / total))
+            camp["soft_ready"] = n
+            allocated += n
+
+
 def run(
     confirm_spend: float,
     resume_csv: str | None = None,
     workers: int = DEFAULT_WORKERS,
     skip_counts: bool = False,
+    cheap: bool = False,
+    target_ready: int | None = None,
+    exclude_csv: str | None = None,
 ) -> dict:
-    global _spent_micro, _cap_micro, _stop_spend
+    global _spent_micro, _cap_micro, _stop_spend, CHEAP_MODE
+    CHEAP_MODE = cheap
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     start_bal = balance_usd()
     effective_cap = min(confirm_spend, start_bal)
@@ -762,7 +895,11 @@ def run(
     _stop_spend = False
     t0 = time.time()
 
+    if target_ready and target_ready > 0:
+        scale_soft_goals(target_ready)
+
     prior_rows: list[dict] = []
+    exclude_only_rows: list[dict] = []
     batch_id = ""
     if resume_csv:
         prior_path = Path(resume_csv)
@@ -786,10 +923,22 @@ def run(
             f"gws-icypeas-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-"
             f"{uuid.uuid4().hex[:8]}"
         )
+        if exclude_csv:
+            exclude_only_rows = load_ready_csv(Path(exclude_csv))
+            print(
+                f"EXCLUDE-ONLY from {exclude_csv} n={len(exclude_only_rows)}",
+                flush=True,
+            )
 
     print(
         f"start_balance=${start_bal:.4f} confirm=${confirm_spend} "
-        f"effective_cap=${effective_cap:.4f} batch={batch_id} workers={workers}",
+        f"effective_cap=${effective_cap:.4f} batch={batch_id} workers={workers} "
+        f"cheap={cheap} target_ready={target_ready}",
+        flush=True,
+    )
+    print(
+        "soft_goals "
+        + " ".join(f"{c['id']}={c['soft_ready']}" for c in CAMPAIGNS),
         flush=True,
     )
 
@@ -803,8 +952,8 @@ def run(
         else:
             excl_emails.add(e)
 
-    # Suppress prior ready leads (don't re-pay)
-    for r in prior_rows:
+    # Suppress prior / exclude-csv ready leads (don't re-pay)
+    for r in list(prior_rows) + list(exclude_only_rows):
         em = (r.get("email") or "").strip().lower()
         if em:
             excl_emails.add(em)
@@ -851,8 +1000,8 @@ def run(
     all_found: list[dict] = []
     seen_domains: set[str] = set(excl_domains)
     seen_people: set[str] = set()
-    for r in prior_rows:
-        li = normalize_linkedin(r.get("linkedin") or "")
+    for r in list(prior_rows) + list(exclude_only_rows):
+        li = normalize_linkedin(r.get("linkedin") or r.get("linkedin_url") or "")
         if li:
             seen_people.add(li)
         pk = f"{r.get('first_name')}|{r.get('last_name')}|{domain_of(r.get('website') or '')}"
@@ -861,6 +1010,7 @@ def run(
     csv_lock = threading.Lock()
     ready_csv_path = OUT_DIR / f"{batch_id}_ready.csv"
     new_ready_this_run = 0
+    target_new = int(target_ready or 0)
 
     def flush_ready() -> None:
         with csv_lock:
@@ -1011,11 +1161,17 @@ def run(
                 stop = True
                 print("STOP: spend cap after page", flush=True)
                 break
+            if target_new and new_ready_this_run >= target_new:
+                stop = True
+                print(f"STOP: hit target_ready={target_new}", flush=True)
+                break
 
         if not progress:
             idle_rounds += 1
         else:
             idle_rounds = 0
+        if target_new and new_ready_this_run >= target_new:
+            break
         if all(
             state[c["id"]]["exhausted"] or state[c["id"]]["ready"] >= c["soft_ready"]
             for c in CAMPAIGNS
@@ -1055,14 +1211,24 @@ def run(
             for cid in state
         },
         "db_order": ["icypeas.people.search"],
-        "email_order": [
-            "pattern",
-            "millionverifier.people.email.verify",
-            "quickenrich.people.email.find",
-            "trykitt.people.email.find",
-        ],
+        "email_order": (
+            [
+                "pattern",
+                "contactout.people.email.verify",
+                "blitzapi.people.email.find",
+            ]
+            if cheap
+            else [
+                "pattern",
+                "millionverifier.people.email.verify",
+                "quickenrich.people.email.find",
+                "trykitt.people.email.find",
+            ]
+        ),
         "fast_mode": True,
-        "contactout_skipped": True,
+        "cheap_mode": cheap,
+        "target_ready": target_ready,
+        "contactout_skipped": not cheap,
     }
     ready_csv = ready_csv_path
     all_csv = OUT_DIR / f"{batch_id}_all_fast.csv"
@@ -1084,8 +1250,20 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--confirm-spend", type=float, required=True)
     p.add_argument("--resume-csv", type=str, default="")
+    p.add_argument("--exclude-csv", type=str, default="")
     p.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     p.add_argument("--skip-counts", action="store_true")
+    p.add_argument(
+        "--cheap",
+        action="store_true",
+        help="Min-credit ladder: pattern→ContactOut→Blitz (no MV/QE/Trykitt)",
+    )
+    p.add_argument(
+        "--target-ready",
+        type=int,
+        default=0,
+        help="Scale soft goals to this many ready leads",
+    )
     args = p.parse_args()
     TOKEN = load_treg_token()
     run(
@@ -1093,6 +1271,9 @@ def main() -> None:
         resume_csv=args.resume_csv or None,
         workers=args.workers,
         skip_counts=args.skip_counts,
+        cheap=args.cheap,
+        target_ready=args.target_ready or None,
+        exclude_csv=args.exclude_csv or None,
     )
 
 
