@@ -13,17 +13,24 @@ Cost matrix: `docs/waterfall-cost-matrix.md`
 
 ## Hard rules
 
-1. **Scope first (free):** Run free counts before any paid call. Present TAM.
-2. **Catalog quote:** Use `scripts/treg_pricing.py` (or `--estimate` / `--scope-only` on runners). Never invent flat averages like `$0.003/lead`.
-3. **Spend confirm:** Stop and require explicit `--confirm-spend <usd>` (at or above expected) before paid find/verify/search pages. “Just run it” is not approval for full volume.
-4. **Pilot before full:** Small pilot + quote-vs-actual report before multi-thousand runs.
-5. **Use the runners**, not ad-hoc `/call/` loops:
+1. **Pull-N semantics (locked):** When the user says “100 prospects” (or any N), that means **pull N people from Icypeas people search**, then enrich **that batch only**. Ready emails = whatever validates from those N — do **not** keep paging until N ready emails.
+2. **Staged pipeline (all future runs):**
+   1. Icypeas people search → exactly N candidates (post title/ICP filter)
+   2. Email find on that batch (Supabase cache first) — **never Icypeas email find / `icypeas.bulk.search`**
+   3. MV-verify found emails (concurrent)
+   4. Bulk upload to Supabase (desc, loc, etc.)
+3. **Scope first (free):** Run free counts before any paid call. Present TAM.
+4. **Catalog quote:** Use `scripts/treg_pricing.py` (or `--estimate` / `--scope-only` on runners). Never invent flat averages like `$0.003/lead`.
+5. **Spend confirm:** Stop and require explicit `--confirm-spend <usd>` (at or above expected) before paid find/verify/search pages. “Just run it” is not approval for full volume.
+6. **Pilot before full:** Small pilot + quote-vs-actual report before multi-thousand runs.
+7. **Use the runners**, not ad-hoc `/call/` loops:
    - Quote: `scripts/treg_pricing.py`
    - Companies: `scripts/discover_companies.py`
    - Enrich: `scripts/enrich_list.py`
    - GWS lists: `scripts/gws_list_builder.py`
-6. **Email waterfall (default):** Supabase cache → Blitz → QuickEnrich(+MV) → Trykitt(+MV) → Icypeas bulk spill if misses ≥100.
-7. **Never ContactOut verify** for volume (free but 429-bound). Optional `--with-pattern-mv` only when the user asks for that cost mode.
-8. **Always report:** quote, actual `X-Treg-Cost-Micro` spend, variance, sources, ready counts.
+   - ATC / vertical builders: `--pull N` (people pulled), not `--ready-target`
+8. **Email waterfall (default):** Supabase cache → Blitz → QuickEnrich(+MV) → Trykitt(+MV). **No Icypeas email.** Opt-in only via `--with-icypeas-email`.
+9. **Never ContactOut verify** for volume (free but 429-bound). Optional `--with-pattern-mv` only when the user asks for that cost mode.
+10. **Always report:** quote, actual `X-Treg-Cost-Micro` spend, variance, `pulled` / `ready` / coverage, sources.
 
 If the request is unrelated to lead scrape/enrich/Treg spend, ignore this rule.

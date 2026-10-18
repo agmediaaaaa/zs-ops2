@@ -26,9 +26,17 @@ Re-quote before every paid run — prices move.
 
 Example: 5,000 companies via Icypeas ≈ `5000 × $0.00038 = $1.90` (+ $0 count).
 
+## Pull-N semantics
+
+**N prospects = N Icypeas people-search rows**, then enrich that batch.
+Ready emails ≤ N. Do not keep paging until N ready.
+
+Stages: discover N → Supabase cache → find (no Icypeas email) → MV → bulk Supabase.
+
 ## Stage B — Email (default find-first)
 
 ContactOut verify is **excluded** (free but rate-limit bound).
+**Icypeas email find / `icypeas.bulk.search` is excluded by default** (opt-in `--with-icypeas-email`).
 
 | Step | Endpoint | Unit | USD | Notes |
 |------|----------|------|-----|-------|
@@ -37,7 +45,7 @@ ContactOut verify is **excluded** (free but rate-limit bound).
 | Find 2 | `quickenrich.people.email.find` | success | ~$0.00483 | then MV |
 | Find 3 | `trykitt.people.email.find` | success | ~$0.005 | then MV |
 | Verify found | `millionverifier.people.email.verify` | success | ~$0.00178 | concurrent ≤50; no true bulk via Treg |
-| Bulk spill ≥100 misses | `icypeas.bulk.search` | result | ~$0.019 | up to 5,000 rows |
+| Opt-in spill | `icypeas.bulk.search` | result | ~$0.019 | **only** with `--with-icypeas-email` |
 | Alt bulk | `leadsforge.people.email.find.bulk` | success | ~$0.0245 | alternative spill |
 
 ### Optional `--with-pattern-mv`

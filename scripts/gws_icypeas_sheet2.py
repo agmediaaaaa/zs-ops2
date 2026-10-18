@@ -818,7 +818,7 @@ def find_blitz(linkedin: str) -> tuple[str, int]:
         "POST",
         "/call/blitzapi.people.email.find",
         {"person_linkedin_url": li},
-        headers={"X-Treg-Route-Exclude": "aiark"},
+        headers={"X-Treg-Route-Exclude": "aiark,icypeas"},
         timeout=30,
         retries=2,
     )

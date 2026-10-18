@@ -1,17 +1,44 @@
 ---
 name: lead-scrape-gates
 description: >-
-  Hard gates for Treg list builds: free-count scope first, catalog-priced spend
-  quote + explicit confirm before paid calls, pilot before full, Supabase skip
-  for known identities (cost only), Plusvibe-only suppress for ready, always
-  report. Default email path is find-first (no ContactOut). Use whenever
-  scraping or enriching cold leads.
+  Hard gates for Treg list builds: pull-N Icypeas people search, then staged
+  email enrich (no Icypeas email), free-count scope first, catalog quote +
+  explicit confirm before paid calls, pilot before full, Supabase skip for known
+  identities (cost only), Plusvibe-only suppress for ready, always report.
+  Use whenever scraping or enriching cold leads.
 ---
 
 # Lead scrape gates (mandatory)
 
 Apply these gates on every list-build / scrape / email-enrichment run (Treg,
 Million Verifier, Trykitt, or equivalent). Do not skip because the user is in a hurry.
+
+## 0. Pull-N model (locked for all future runs)
+
+When the user asks for **N prospects** (e.g. “100 prospects”, `--pull 100`):
+
+| Meaning | Not meaning |
+|---------|-------------|
+| Pull **N people** from `icypeas.people.search` (after title/ICP filters) | Keep searching until N **ready emails** |
+| Enrich **that fixed batch** only | Page → enrich → page until ready target |
+| Accept **any** valid emails from those N | Guarantee N emails |
+
+**Pipeline stages (always, in order):**
+
+1. **Discover** — Icypeas people search until `pulled == N` (or TAM exhausted).
+2. **Cache** — Supabase LinkedIn/email/domain lookup on the whole batch (cost skip).
+3. **Find** — concurrent email find on misses only: Blitz → QuickEnrich → Trykitt.
+   - Exclude Icypeas from email routing (`X-Treg-Route-Exclude: aiark,icypeas`).
+   - Do **not** call `icypeas.bulk.search` / Icypeas email find unless `--with-icypeas-email`.
+4. **Verify** — concurrent MillionVerifier on found emails (≤50 workers; no Treg bulk MV).
+5. **Upload** — bulk Supabase upsert (desc, loc, company fields) + batch `lead_list_members`.
+
+Coverage report: `ready / pulled` (expect ready < pulled). That is correct.
+
+```bash
+# Example: 100 people pull, take whatever emails validate
+python scripts/atc_np_pa_list_builder.py --pull 100 --confirm-spend 2.50
+```
 
 ## 1. Scope first (free)
 
@@ -29,6 +56,8 @@ python scripts/discover_companies.py --industry "..." --target 5000 --scope-only
 python scripts/enrich_list.py <list_id> --estimate
 ```
 
+Quote people volume = **pull N**, not assumed ready N.
+
 ## 2. Spend confirm (hard stop)
 
 1. Print the quote table: stage, endpoint, unit USD, volume, line USD.
@@ -41,8 +70,8 @@ Never treat “run the plan” alone as spend approval for a **full** volume run
 
 ## 3. Pilot before full
 
-1. Always run a pilot first (default: small ready target, e.g. 500 or 10×N campaigns).
-2. Deliver the report (section 6) including **quoted vs actual** variance.
+1. Always run a pilot first (default: small **pull**, e.g. 25–100 people).
+2. Deliver the report (section 6) including **quoted vs actual** variance and `ready/pulled`.
 3. Full volume only after a **new** scope + spend confirm.
 
 ## 4. Supabase = cost skip, not suppress
@@ -64,36 +93,38 @@ End every run (scope-only, pilot, full) with:
 |--------|---------|
 | Scope / TAM | Free-count per campaign |
 | Quote | Endpoint unit prices × volumes |
-| Searched | People/companies pulled |
+| **Pulled** | People from Icypeas search (= N) |
 | Skipped known (Supabase) | Paid enrich avoided |
 | Plusvibe excluded | Already in sequencer |
-| Ready | Verified + not in Plusvibe |
-| Coverage | ready / searched |
-| DB / email order used | Actual tools called |
+| Ready | Valid email + not in Plusvibe |
+| Coverage | ready / **pulled** |
+| DB / email order used | Actual tools called (no Icypeas email by default) |
 | Spend | Actual USD vs quoted expected/max/cap |
 | Variance | actual − quoted_expected |
 | Handoff | Supabase batch / list_id + Sheet URL |
 
 ## 7. Tool order (default)
 
-**Discovery:** free count → cheapest per-result search with **parallel pages**
+**Discovery (people lists):** `icypeas.people.search` for pull-N. Prefer large pages (≤100). Cursor-paginated — finish discovery before Stage B.
+
+**Company discovery:** free count → cheapest per-result search with **parallel pages**
 (`aiark.companies.search` page numbers, or sharded `icypeas.companies.search`).
 Skip Diffbot / PDL / Enrichlayer for volume.
 
-**Email (find-first — default):**
+**Email (find-first — default, no Icypeas email):**
 
 1. Supabase cache (≤30d) — $0
 2. Blitz find (~$0.000495/success) when LinkedIn present
 3. QuickEnrich find (~$0.00483/success) + MV verify
 4. Trykitt find (~$0.005/success) + MV verify
-5. Bulk spill (≥100 misses): `icypeas.bulk.search` (~$0.019/result)
 
 **Do not use ContactOut verify** for volume (free but 429-bound; wall-clock killer).
 
+**Do not use Icypeas for email** unless the user passes `--with-icypeas-email`
+(then `icypeas.bulk.search` spill is allowed).
+
 **Optional cost mode:** `--with-pattern-mv` (pattern + MillionVerifier before find).
 Still never ContactOut.
-
-People extract (list builder): `leadsforge` → `icypeas` (if thin). Skip AI Ark by default for people extract.
 
 ## Runners
 
@@ -103,6 +134,7 @@ People extract (list builder): `leadsforge` → `icypeas` (if thin). Skip AI Ark
 | Company discovery | `scripts/discover_companies.py` |
 | List enrich | `scripts/enrich_list.py` |
 | GWS list builder | `scripts/gws_list_builder.py` |
+| ATC NP/PA | `scripts/atc_np_pa_list_builder.py --pull N` |
 | Cost matrix | `docs/waterfall-cost-matrix.md` |
 
 ```bash
@@ -110,7 +142,10 @@ People extract (list builder): `leadsforge` → `icypeas` (if thin). Skip AI Ark
 python scripts/discover_companies.py --industry "Software Development" --target 5000 --scope-only
 python scripts/gws_list_builder.py --scope-only
 
-# Pilot after user confirms spend
+# Pull-N pilot (people pulled, not ready target)
+python scripts/atc_np_pa_list_builder.py --pull 100 --confirm-spend 2.50
+
+# Enrich existing list
 python scripts/enrich_list.py <list_id> --estimate
 python scripts/enrich_list.py <list_id> --confirm-spend 4.03
 

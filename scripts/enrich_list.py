@@ -579,8 +579,12 @@ def enrich_lead_batch(
     list_id: str,
     report: RunReport,
     with_pattern_mv: bool = False,
+    with_icypeas_email: bool = False,
 ) -> list[tuple[dict, dict]]:
-    """Enrich a batch: cache → optional pattern+MV → find-first → bulk spill."""
+    """Enrich a batch: cache → optional pattern+MV → find-first.
+
+    Icypeas bulk email spill only when with_icypeas_email=True.
+    """
     results: list[tuple[dict, dict]] = []
 
     cache_hits = []
@@ -670,8 +674,12 @@ def enrich_lead_batch(
                     # keep partial but not ready
                     results.append((lead, result))
 
-        # Bulk spill for large miss queues
-        if len(still_miss) >= 100 and enricher.under_cap(19000):
+        # Opt-in Icypeas bulk spill (excluded from default pull-N email path)
+        if (
+            with_icypeas_email
+            and len(still_miss) >= 100
+            and enricher.under_cap(19000)
+        ):
             print(f"  Bulk spill for {len(still_miss)} misses...", flush=True)
             found = bulk_find_icypeas(still_miss, report)
             recovered = []
@@ -802,9 +810,14 @@ def enrich_list(
     confirm_spend: float,
     workers: int = 32,
     with_pattern_mv: bool = False,
+    with_icypeas_email: bool = False,
     quote: dict | None = None,
 ) -> dict:
-    """Enrich all pending leads using find-first waterfall (no ContactOut)."""
+    """Enrich all pending leads using find-first waterfall (no ContactOut).
+
+    Icypeas email / bulk spill is off by default (pull-N model). Pass
+    with_icypeas_email=True only when explicitly requested.
+    """
     # Fetch list and pending leads
     print("Fetching list and pending leads...")
     lst, leads = fetch_list_pending_leads(list_id)
@@ -896,7 +909,12 @@ def enrich_list(
         
         # Enrich batch
         batch_results = enrich_lead_batch(
-            batch, excl_emails, list_id, report, with_pattern_mv=with_pattern_mv
+            batch,
+            excl_emails,
+            list_id,
+            report,
+            with_pattern_mv=with_pattern_mv,
+            with_icypeas_email=with_icypeas_email,
         )
         
         # Update leads
@@ -1026,6 +1044,11 @@ def main() -> None:
         help="Optional: pattern + MillionVerifier before find waterfall",
     )
     parser.add_argument(
+        "--with-icypeas-email",
+        action="store_true",
+        help="Opt-in: allow Icypeas bulk email spill (off by default)",
+    )
+    parser.add_argument(
         "--cheap",
         action="store_true",
         help=argparse.SUPPRESS,  # deprecated
@@ -1086,6 +1109,7 @@ def main() -> None:
             args.confirm_spend,
             workers=args.workers,
             with_pattern_mv=args.with_pattern_mv,
+            with_icypeas_email=args.with_icypeas_email,
             quote=quote,
         )
         print("\nFinal results:")

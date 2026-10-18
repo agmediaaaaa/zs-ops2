@@ -3,9 +3,12 @@
 
 Gates (see .cursor/skills/lead-scrape-gates/SKILL.md):
   --scope-only          free TAM counts only
-  --pilot               10 ready × 8 campaigns (requires --confirm-spend)
+  --pilot               pull-N pilot (requires --confirm-spend)
   --full                volume run (requires --confirm-spend; after pilot)
   --confirm-spend USD   hard spend cap; required for paid modes
+
+Pull-N: campaign targets are people pulled, then enrich that batch.
+Email find excludes Icypeas (use enrich_list --with-icypeas-email to opt in).
 """
 from __future__ import annotations
 
@@ -546,7 +549,7 @@ def verify_mv(email: str) -> tuple[str, int]:
 def find_email_trykitt(first: str, last: str, domain: str, person_id: str) -> tuple[str, int, str]:
     full = f"{first} {last}".strip()
     headers = {
-        "X-Treg-Route-Exclude": "aiark",
+        "X-Treg-Route-Exclude": "aiark,icypeas",
         "X-Treg-Route-Max-Cost": "0.006",
         "X-Treg-Route-Waterfall": "0",
         "Idempotency-Key": f"gws-email-{person_id}-{domain}",
