@@ -22,21 +22,23 @@ The pipeline enriches B2B leads through a multi-stage email discovery ladder usi
 
 ### Performance Features
 
-- **Bulk operations**: Verify 50+ emails simultaneously instead of one-by-one
-- **Concurrent finds**: Run 32+ find operations in parallel with rate-limit backoff
-- **Smart batching**: Process leads in 100-lead batches to optimize memory and API usage
+- **Concurrent operations**: Run multiple verifications and finds in parallel with rate-limit backoff
+- **Smart batching**: Process leads in batches to optimize memory and API usage
 - **Rate limit handling**: Automatic retry with exponential backoff on 429 errors
-- **Cost efficiency**: Reuse cached emails, bulk verify patterns before expensive finds
+- **Cost efficiency**: Reuse cached emails (30-day window), bulk verify patterns before expensive finds
 
-All leads are stored in the main `pipeline_leads` table (the "ZS: Lead Database" in Supabase). List membership is tracked via a join table, so one lead can belong to multiple lists without duplication.
+All leads are stored in the main **"Lead Database"** table (441k+ rows in Supabase). List membership is tracked via a join table, so one lead can belong to multiple lists without duplication.
+
+**Note on pipeline_leads**: The ~1k-row `pipeline_leads` table remains as a staging table for PR #11's `gws_icypeas_sheet2.py` script. It is NOT used by the lead list system. The canonical source of truth is "Lead Database".
 
 ## Database Schema
 
 ### Core Tables
 
-- **`pipeline_leads`**: Main leads table (hundreds of thousands of rows)
-  - Contains: email, LinkedIn URL, name, title, company, location, size, etc.
-  - Has `list_ids UUID[]` array for quick list membership checks
+- **`"Lead Database"`**: Main leads table (441k+ rows)
+  - Columns: `id` (bigint), `created_at`, `"First Name"`, `"Last Name"`, `"Email"`, `"Linkedin"`, `"Company Name"`, `"Website"`
+  - New columns added: `company_size`, `company_description`, `location`, `email_source`, `email_status`, `enrichment_updated_at`
+  - Source of truth for all leads across all clients
   
 - **`lead_lists`**: Tracks scrape/import batches
   - Fields: `list_id`, `client`, `list_name`, `source`, `status`, counts, costs
@@ -291,30 +293,32 @@ Already-enriched leads are skipped automatically.
 
 ### Why Not Separate Lead Tables Per Client?
 
-Keeping all leads in `pipeline_leads` enables:
+Keeping all leads in "Lead Database" enables:
 - **Deduplication**: Instant lookup by LinkedIn/email across all clients
 - **Cost savings**: Reuse enriched emails across lists (with proper controls)
 - **Unified reporting**: One table for all analytics
-- **Scalability**: Postgres handles millions of rows efficiently with proper indexes
+- **Scalability**: Postgres handles hundreds of thousands of rows efficiently with proper indexes
 
 ### Cost Tracking
 
 Cost is tracked at two levels:
 1. **Per-lead** (`lead_list_members.cost_micro`): Tracks exact spend for each lead in each list
-2. **Per-list** (`lead_lists.actual_cost_usd`): Aggregated via database trigger
+2. **Per-list** (`lead_lists.actual_cost_usd`): Aggregated by enrichment runner
 
 This allows:
 - Accurate per-list cost reporting
 - Fair cost allocation when leads are in multiple lists
 - Easy auditing (sum of `cost_micro` = `actual_cost_usd`)
 
-## Performance Benchmarks
+## Performance Notes
 
-Based on typical runs:
-- **Throughput**: 40-60 leads/min (with bulk operations)
-- **Cache hit rate**: 30-50% on subsequent runs
-- **Cost per lead**: $0.002-0.005 (depending on pattern hit rate)
-- **Bulk efficiency**: 10x faster than sequential processing
+The system uses concurrent operations and batch processing to optimize throughput. Actual performance depends on:
+- API rate limits and response times
+- Cache hit rate (30-day window for email reuse)
+- Pattern email success rate
+- Network conditions
+
+Cost per lead varies based on the enrichment path taken (cache hit = $0, pattern+verify ≈ $0.002-0.003, find services ≈ $0.005-0.010).
 
 ## Future Enhancements
 

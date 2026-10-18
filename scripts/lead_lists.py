@@ -162,14 +162,14 @@ def cmd_create(args: argparse.Namespace) -> None:
             if not normalized:
                 continue
             
-            # Try to find existing lead
+            # Try to find existing lead in Lead Database
             existing = sb_request(
                 "GET",
-                "pipeline_leads",
+                "Lead Database",
                 query={
-                    "linkedin": f"ilike.%{normalized}%",
+                    "Linkedin": f"ilike.%{normalized}%",
                     "limit": "1",
-                    "select": "id,linkedin,email,first_name,last_name",
+                    "select": "id,Linkedin,Email,First Name,Last Name",
                 }
             )
             
@@ -179,14 +179,9 @@ def cmd_create(args: argparse.Namespace) -> None:
                 # Create placeholder lead (to be enriched later)
                 new_lead = sb_request(
                     "POST",
-                    "pipeline_leads",
+                    "Lead Database",
                     {
-                        "linkedin": url if url.startswith("http") else f"https://{url}",
-                        "client": args.client,
-                        "source_run": f"list_{list_id[:8]}",
-                        "batch_id": list_id,
-                        "handoff_status": "pending",
-                        "list_ids": [list_id],
+                        "Linkedin": url if url.startswith("http") else f"https://{url}",
                     }
                 )
                 if new_lead and len(new_lead) > 0:
@@ -219,9 +214,9 @@ def cmd_create(args: argparse.Namespace) -> None:
                 normalized = normalize_linkedin(linkedin)
                 existing = sb_request(
                     "GET",
-                    "pipeline_leads",
+                    "Lead Database",
                     query={
-                        "linkedin": f"ilike.%{normalized}%",
+                        "Linkedin": f"ilike.%{normalized}%",
                         "limit": "1",
                         "select": "id",
                     }
@@ -232,8 +227,8 @@ def cmd_create(args: argparse.Namespace) -> None:
             if not lead_id and email and email not in ("", "n/a", "none", "null"):
                 existing = sb_request(
                     "GET",
-                    "pipeline_leads",
-                    query={"email": f"eq.{email}", "limit": "1", "select": "id"}
+                    "Lead Database",
+                    query={"Email": f"eq.{email}", "limit": "1", "select": "id"}
                 )
                 if existing and len(existing) > 0:
                     lead_id = existing[0]["id"]
@@ -242,20 +237,14 @@ def cmd_create(args: argparse.Namespace) -> None:
             if not lead_id:
                 new_lead = sb_request(
                     "POST",
-                    "pipeline_leads",
+                    "Lead Database",
                     {
-                        "linkedin": linkedin if linkedin.startswith("http") else (f"https://{linkedin}" if linkedin else None),
-                        "email": email if email and email not in ("", "n/a", "none", "null") else None,
-                        "first_name": row.get("first_name"),
-                        "last_name": row.get("last_name"),
-                        "title": row.get("title"),
-                        "company_name": row.get("company_name"),
-                        "website": row.get("website"),
-                        "client": args.client,
-                        "source_run": f"list_{list_id[:8]}",
-                        "batch_id": list_id,
-                        "handoff_status": "pending",
-                        "list_ids": [list_id],
+                        "Linkedin": linkedin if linkedin.startswith("http") else (f"https://{linkedin}" if linkedin else None),
+                        "Email": email if email and email not in ("", "n/a", "none", "null") else None,
+                        "First Name": row.get("first_name") or row.get("First Name"),
+                        "Last Name": row.get("last_name") or row.get("Last Name"),
+                        "Company Name": row.get("company_name") or row.get("Company Name"),
+                        "Website": row.get("website") or row.get("Website"),
                     }
                 )
                 if new_lead and len(new_lead) > 0:
@@ -426,15 +415,15 @@ def cmd_show(args: argparse.Namespace) -> None:
             "lead_list_members",
             query={
                 "list_id": f"eq.{list_id}",
-                "select": "lead_id,enrichment_status,cost_micro,pipeline_leads(first_name,last_name,email,title,company_name)",
+                "select": "lead_id,enrichment_status,cost_micro,Lead Database(First Name,Last Name,Email,Company Name)",
                 "limit": str(args.sample),
             }
         )
         for m in members or []:
-            lead = m.get("pipeline_leads") or {}
+            lead = m.get("Lead Database") or {}
             status = m["enrichment_status"]
             cost = m["cost_micro"] / 1_000_000 if m["cost_micro"] else 0
-            print(f"  [{status:<12}] {lead.get('first_name')} {lead.get('last_name')} | {lead.get('email') or '(no email)'} | ${cost:.4f}")
+            print(f"  [{status:<12}] {lead.get('First Name')} {lead.get('Last Name')} | {lead.get('Email') or '(no email)'} | ${cost:.4f}")
 
 
 # ============================================================================
@@ -553,7 +542,7 @@ def cmd_export(args: argparse.Namespace) -> None:
         query={
             "list_id": f"eq.{list_id}",
             "enrichment_status": "eq.enriched",
-            "select": "lead_id,cost_micro,pipeline_leads(*)",
+            "select": "lead_id,cost_micro,Lead Database(*)",
         }
     )
     
@@ -564,9 +553,9 @@ def cmd_export(args: argparse.Namespace) -> None:
     # Filter to only leads with email
     ready_leads = [
         m for m in members 
-        if m.get("pipeline_leads") 
-        and m["pipeline_leads"].get("email")
-        and m["pipeline_leads"]["email"] not in ("", "n/a", "none", "null")
+        if m.get("Lead Database") 
+        and m["Lead Database"].get("Email")
+        and m["Lead Database"]["Email"] not in ("", "n/a", "none", "null")
     ]
     
     if not ready_leads:
@@ -589,19 +578,19 @@ def cmd_export(args: argparse.Namespace) -> None:
             writer.writeheader()
             
             for m in ready_leads:
-                lead = m["pipeline_leads"]
+                lead = m["Lead Database"]
                 writer.writerow({
-                    "first_name": lead.get("first_name"),
-                    "last_name": lead.get("last_name"),
-                    "title": lead.get("title"),
-                    "email": lead.get("email"),
-                    "linkedin": lead.get("linkedin"),
-                    "company_name": lead.get("company_name"),
-                    "website": lead.get("website"),
+                    "first_name": lead.get("First Name"),
+                    "last_name": lead.get("Last Name"),
+                    "title": "",  # Not in Lead Database schema
+                    "email": lead.get("Email"),
+                    "linkedin": lead.get("Linkedin"),
+                    "company_name": lead.get("Company Name"),
+                    "website": lead.get("Website"),
                     "location": lead.get("location"),
                     "company_size": lead.get("company_size"),
                     "company_description": lead.get("company_description"),
-                    "email_status": lead.get("mv_status"),
+                    "email_status": lead.get("email_status"),
                     "email_source": lead.get("email_source"),
                 })
         

@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import re
 
 # Import enrichment logic from gws_icypeas_sheet2
 sys.path.insert(0, str(Path(__file__).parent))
@@ -173,8 +174,17 @@ class RunReport:
         }
 
 
+def normalize_linkedin(url: str) -> str:
+    """Normalize LinkedIn URL for deduplication."""
+    u = url.strip().lower().rstrip("/")
+    u = re.sub(r"^https?://(www\.)?", "", u)
+    if "/in/" in u:
+        return u.split("?")[0]
+    return u
+
+
 def fetch_list_pending_leads(list_id: str) -> tuple[dict, list[dict]]:
-    """Fetch list metadata and all pending leads."""
+    """Fetch list metadata and all pending leads from Lead Database."""
     # Fetch the list
     lists = sb_request("GET", "lead_lists", query={"list_id": f"eq.{list_id}"})
     if not lists or len(lists) == 0:
@@ -182,14 +192,14 @@ def fetch_list_pending_leads(list_id: str) -> tuple[dict, list[dict]]:
     
     lst = lists[0]
     
-    # Fetch pending leads
+    # Fetch pending leads from Lead Database
     members = sb_request(
         "GET",
         "lead_list_members",
         query={
             "list_id": f"eq.{list_id}",
             "enrichment_status": "eq.pending",
-            "select": "lead_id,pipeline_leads(id,linkedin,email,first_name,last_name,title,company_name,website,location,company_description,employees)",
+            "select": "lead_id,Lead Database(id,Linkedin,Email,First Name,Last Name,Company Name,Website,location,company_description,company_size)",
         }
     )
 
@@ -198,33 +208,54 @@ def fetch_list_pending_leads(list_id: str) -> tuple[dict, list[dict]]:
 
     leads = []
     for m in members:
-        lead_data = m.get("pipeline_leads")
+        lead_data = m.get("Lead Database")
         if not lead_data:
             continue
 
+        website = lead_data.get("Website") or ""
         lead = {
             "id": lead_data["id"],
             "lead_id": m["lead_id"],
-            "linkedin": lead_data.get("linkedin") or "",
-            "email": lead_data.get("email"),
-            "first_name": lead_data.get("first_name") or "",
-            "last_name": lead_data.get("last_name") or "",
-            "title": lead_data.get("title") or "",
-            "company_name": lead_data.get("company_name") or "",
-            "website": lead_data.get("website") or "",
+            "linkedin": lead_data.get("Linkedin") or "",
+            "email": lead_data.get("Email"),
+            "first_name": lead_data.get("First Name") or "",
+            "last_name": lead_data.get("Last Name") or "",
+            "company_name": lead_data.get("Company Name") or "",
+            "website": website,
             "location": lead_data.get("location") or "",
             "company_description": lead_data.get("company_description") or "",
-            "employee_count": lead_data.get("employees"),
-            "domain": enricher.domain_of(lead_data.get("website") or ""),
+            "company_size": lead_data.get("company_size") or "",
+            "domain": enricher.domain_of(website),
         }
         leads.append(lead)
 
     return lst, leads
 
 
+def upsert_lead_database(lead: dict, email: str, email_source: str, email_status: str) -> None:
+    """Upsert enriched lead to Lead Database."""
+    try:
+        # Update by lead_id
+        sb_request(
+            "PATCH",
+            f"Lead Database?id=eq.{lead['id']}",
+            {
+                "Email": email,
+                "email_source": email_source,
+                "email_status": email_status,
+                "company_size": lead.get("company_size") or None,
+                "company_description": lead.get("company_description") or None,
+                "location": lead.get("location") or None,
+                "enrichment_updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    except Exception as e:
+        print(f"  ⚠ Failed to update Lead Database: {e}", flush=True)
+
+
 def update_member_status(
     list_id: str,
-    lead_id: str,
+    lead_id: int,
     status: str,
     cost_micro: int = 0,
 ) -> None:
@@ -250,6 +281,57 @@ def update_member_status(
         )
     except Exception as e:
         print(f"  ⚠ Failed to update member status: {e}", flush=True)
+
+
+def update_list_counts(list_id: str) -> None:
+    """Recalculate and update list counts (called after batch processing)."""
+    try:
+        # Count by status
+        members = sb_request(
+            "GET",
+            "lead_list_members",
+            query={
+                "list_id": f"eq.{list_id}",
+                "select": "enrichment_status,cost_micro,lead_id,Lead Database(Email)",
+            }
+        )
+        
+        if not members:
+            return
+        
+        enriched_count = sum(1 for m in members if m["enrichment_status"] == "enriched")
+        failed_count = sum(1 for m in members if m["enrichment_status"] == "failed")
+        skipped_count = sum(1 for m in members if m["enrichment_status"] == "skipped")
+        
+        # Count ready (enriched with valid email)
+        ready_count = sum(
+            1 for m in members 
+            if m["enrichment_status"] == "enriched"
+            and m.get("Lead Database")
+            and m["Lead Database"].get("Email")
+            and m["Lead Database"]["Email"] not in ("", "n/a", "none", "null")
+        )
+        
+        # Sum cost
+        actual_cost_usd = sum(
+            (m.get("cost_micro") or 0) / 1_000_000 
+            for m in members
+        )
+        
+        # Update list
+        sb_request(
+            "PATCH",
+            f"lead_lists?list_id=eq.{list_id}",
+            {
+                "enriched_count": enriched_count,
+                "ready_count": ready_count,
+                "failed_count": failed_count,
+                "skipped_count": skipped_count,
+                "actual_cost_usd": round(actual_cost_usd, 6),
+            }
+        )
+    except Exception as e:
+        print(f"  ⚠ Failed to update list counts: {e}", flush=True)
 
 
 def bulk_verify_mv(emails: list[str], report: RunReport) -> dict[str, str]:
@@ -707,17 +789,13 @@ def enrich_list(
             except (ValueError, TypeError):
                 cost_micro = 0
             
-            # Update lead in pipeline_leads
+            # Update lead in Lead Database
             if email:
-                enricher.upsert_pipeline_lead(
-                    {
-                        **lead,
-                        "email": email,
-                        "email_status": result.get("email_status"),
-                        "email_source": result.get("email_source"),
-                        "batch_id": list_id,
-                    },
-                    source_run=f"list_{list_id[:8]}",
+                upsert_lead_database(
+                    lead,
+                    email,
+                    result.get("email_source") or "",
+                    result.get("email_status") or "",
                 )
             
             # Update member status
@@ -740,7 +818,12 @@ def enrich_list(
             print("\n⚠ Cost cap reached, stopping enrichment")
             break
         
+        # Update counts after each batch
+        update_list_counts(list_id)
         print()
+    
+    # Final count update
+    update_list_counts(list_id)
     
     # Generate final report
     final_report = report.to_dict()

@@ -44,33 +44,26 @@
                                │
                                │
 ┌─────────────────────────┐    │
-│    pipeline_leads       │    │
+│   "Lead Database"       │    │
 ├─────────────────────────┤    │
-│ id (PK)                │◄───┘
-│ email                   │
-│ linkedin                │
-│ first_name              │
-│ last_name               │
-│ title                   │
-│ company_name            │
-│ website                 │
-│ company_domain          │
-│ location                │
-│ company_size            │
-│ company_description     │
-│ employees               │
-│ mv_status               │
-│ email_source            │
-│ plusvibe_ready          │
-│ client                  │
-│ batch_id                │
-│ source_run              │
-│ handoff_status          │
-│ list_ids[]              │◄─── Quick membership check
+│ id (PK) bigint         │◄───┘
 │ created_at              │
-│ updated_at              │
-│ raw                     │
+│ "First Name"            │
+│ "Last Name"             │
+│ "Email"                 │
+│ "Linkedin"              │
+│ "Company Name"          │
+│ "Website"               │
+│ company_size            │◄─── New
+│ company_description     │◄─── New
+│ location                │◄─── New
+│ email_source            │◄─── New
+│ email_status            │◄─── New
+│ enrichment_updated_at   │◄─── New (30-day cache)
 └─────────────────────────┘
+
+NOTE: pipeline_leads (~1k rows) remains as staging
+      for PR #11. NOT used by lead list system.
 ```
 
 ## Table Details
@@ -82,8 +75,8 @@ Tracks scrape/import batches with status and cost accounting.
 **Key Fields:**
 - `list_id`: UUID primary key
 - `status`: `scraped` → `enriching` → `enriched` → `exported` | `failed`
-- `*_count`: Auto-updated by triggers (from `lead_list_members`)
-- `actual_cost_usd`: Auto-calculated from member `cost_micro` sum
+- `*_count`: Updated by enrichment runner (not triggers)
+- `actual_cost_usd`: Aggregated by enrichment runner
 - `run_report`: JSONB with detailed enrichment metrics
 
 **Status Flow:**
@@ -121,12 +114,26 @@ enriched (email found) | failed (no email) | skipped (invalid data)
 - Per-list cost tracking (fair allocation)
 - Cascade delete (clean up when list deleted)
 
-### `pipeline_leads`
+### `"Lead Database"`
 
-Main leads table (existing, with new columns added).
+Main leads table (441k+ rows, existing, with new columns added).
 
-**New Fields:**
-- `list_ids UUID[]`: Array of list IDs this lead belongs to (for quick membership checks)
+**Existing Fields:**
+- `id` (bigint): Primary key
+- `created_at`: Timestamp
+- `"First Name"`, `"Last Name"`: Lead name
+- `"Email"`: Lead email
+- `"Linkedin"`: LinkedIn profile URL
+- `"Company Name"`: Company name
+- `"Website"`: Company website
+
+**New Fields (nullable, no defaults):**
+- `company_size`: Company employee count
+- `company_description`: Company description
+- `location`: Lead location
+- `email_source`: How email was found (supabase_cache, pattern_mv, blitz, etc.)
+- `email_status`: Verification status (valid, smtp_valid, catch_all, etc.)
+- `enrichment_updated_at`: When enrichment was last updated (for 30-day cache)
 
 **Deduplication:**
 1. Normalized LinkedIn URL (lowercase, no trailing slash, no query params)
@@ -144,29 +151,23 @@ idx_lead_lists_created_at         ON (created_at DESC)
 idx_lead_lists_status             ON (status) WHERE status IN ('scraped', 'enriching')
 
 -- lead_list_members
+idx_lead_list_members_list_id     ON (list_id)
 idx_lead_list_members_lead_id     ON (lead_id)
 idx_lead_list_members_status      ON (list_id, enrichment_status) 
                                    WHERE status IN ('pending', 'in_progress')
 
--- pipeline_leads
-idx_pipeline_leads_list_ids       ON (list_ids) USING GIN 
-                                   WHERE list_ids IS NOT NULL
+-- "Lead Database" (concurrent, separate file)
+idx_lead_database_enrichment_updated_at ON (enrichment_updated_at) 
+                                         WHERE enrichment_updated_at IS NOT NULL
 ```
 
 ## Triggers
 
-### `update_lead_list_counts()`
-
-Auto-updates `lead_lists` counts on `lead_list_members` changes:
-- `enriched_count`: Count of `enriched` members
-- `ready_count`: Count of `enriched` members with valid email
-- `failed_count`: Count of `failed` members
-- `skipped_count`: Count of `skipped` members
-- `actual_cost_usd`: Sum of `cost_micro / 1000000`
-
-### `update_updated_at()`
+### `update_lead_lists_updated_at()`
 
 Auto-updates `updated_at` timestamp on `lead_lists` changes.
+
+**Note on count updates**: List counts (`enriched_count`, `ready_count`, etc.) are updated by the enrichment runner, not by triggers. This avoids O(N²) recount overhead on bulk operations.
 
 ## Run Report Schema
 
@@ -342,24 +343,23 @@ The only change to `pipeline_leads` is adding a nullable `list_ids` column, whic
 
 ## Performance Characteristics
 
-**Table Sizes (expected):**
-- `pipeline_leads`: 100K-1M rows (existing)
-- `lead_lists`: 100-1000 rows (one per scrape/import)
-- `lead_list_members`: 10K-100K rows (members × lists)
+**Table Sizes:**
+- `"Lead Database"`: 441k rows (existing, growing)
+- `lead_lists`: Grows with each scrape/import
+- `lead_list_members`: Grows with list membership
 
 **Query Performance:**
-- List creation: O(n) where n = leads in list (1-10K typical)
-- Enrichment: O(n) with bulk operations (10x faster than sequential)
-- Export: O(m) where m = ready leads (filtered)
-- Stats: O(l) where l = number of lists (100s)
+- List creation: O(n) where n = leads in list
+- Enrichment: O(n) with concurrent operations
+- Export: O(m) where m = ready leads
+- Stats: O(l) where l = number of lists
 
-**Bottlenecks:**
+**Considerations:**
 - API rate limits (handled with backoff)
-- Supabase cache load (indexed on LinkedIn/email)
-- Bulk verify size (limited to 50 concurrent)
+- Cache lookups on large table (indexed on enrichment_updated_at)
+- Concurrent operation limits (tunable)
 
 **Optimizations:**
-- GIN index on `list_ids` for fast membership checks
 - Partial indexes on status fields (only pending/in_progress)
-- Concurrent bulk operations (50+ emails verified at once)
-- Rate-limit backoff (automatic retry on 429)
+- Concurrent operations with rate-limit backoff
+- Batch processing to reduce round-trips
