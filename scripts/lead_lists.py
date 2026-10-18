@@ -291,6 +291,9 @@ def cmd_create(args: argparse.Namespace) -> None:
                         "Company Name": row.get("company_name") or row.get("Company Name"),
                         "Website": row.get("website") or row.get("Website"),
                         "title": row.get("title") or row.get("Title") or row.get("job_title") or row.get("jobTitle"),
+                        "company_industry": row.get("company_industry")
+                        or row.get("Company Industry")
+                        or row.get("industry"),
                     }
                 )
                 if new_lead and len(new_lead) > 0:
@@ -617,7 +620,8 @@ def cmd_export(args: argparse.Namespace) -> None:
             fieldnames = [
                 "first_name", "last_name", "title", "email", "linkedin",
                 "company_name", "website", "location", "company_size",
-                "company_description", "email_status", "email_source"
+                "company_description", "company_industry",
+                "email_status", "email_source",
             ]
             writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
@@ -635,6 +639,7 @@ def cmd_export(args: argparse.Namespace) -> None:
                     "location": lead.get("location"),
                     "company_size": lead.get("company_size"),
                     "company_description": lead.get("company_description"),
+                    "company_industry": lead.get("company_industry") or "",
                     "email_status": lead.get("email_status"),
                     "email_source": lead.get("email_source"),
                 })
