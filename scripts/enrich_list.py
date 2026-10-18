@@ -206,7 +206,7 @@ def fetch_list_pending_leads(list_id: str) -> tuple[dict, list[dict]]:
             query={
                 "list_id": f"eq.{list_id}",
                 "enrichment_status": "eq.pending",
-                "select": 'lead_id,"Lead Database"(id,"Linkedin","Email","First Name","Last Name","Company Name","Website",location,company_description,company_size)',
+                "select": 'lead_id,"Lead Database"(id,"Linkedin","Email","First Name","Last Name","Company Name","Website",title,location,company_description,company_size)',
                 "limit": str(page_size),
                 "offset": str(offset),
             }
@@ -241,6 +241,7 @@ def fetch_list_pending_leads(list_id: str) -> tuple[dict, list[dict]]:
             "last_name": lead_data.get("Last Name") or "",
             "company_name": lead_data.get("Company Name") or "",
             "website": website,
+            "title": lead_data.get("title") or "",
             "location": lead_data.get("location") or "",
             "company_description": lead_data.get("company_description") or "",
             "company_size": lead_data.get("company_size") or "",

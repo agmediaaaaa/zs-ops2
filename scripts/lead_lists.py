@@ -290,6 +290,7 @@ def cmd_create(args: argparse.Namespace) -> None:
                         "Last Name": row.get("last_name") or row.get("Last Name"),
                         "Company Name": row.get("company_name") or row.get("Company Name"),
                         "Website": row.get("website") or row.get("Website"),
+                        "title": row.get("title") or row.get("Title") or row.get("job_title") or row.get("jobTitle"),
                     }
                 )
                 if new_lead and len(new_lead) > 0:
@@ -626,7 +627,7 @@ def cmd_export(args: argparse.Namespace) -> None:
                 writer.writerow({
                     "first_name": lead.get("First Name"),
                     "last_name": lead.get("Last Name"),
-                    "title": "",  # Not in Lead Database schema
+                    "title": lead.get("title") or "",
                     "email": lead.get("Email"),
                     "linkedin": lead.get("Linkedin"),
                     "company_name": lead.get("Company Name"),

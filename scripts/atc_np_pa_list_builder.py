@@ -781,6 +781,7 @@ def upsert_lead(row: dict) -> int:
         "Linkedin": linkedin or None,
         "Company Name": row.get("company_name"),
         "Website": row.get("website"),
+        "title": row.get("title"),
         "company_size": row.get("company_size"),
         "company_description": row.get("company_description"),
         "location": row.get("location"),
