@@ -462,6 +462,264 @@ def load_file_set(path: Path) -> set[str]:
     return {ln.strip().lower() for ln in path.read_text().splitlines() if ln.strip()}
 
 
+def supabase_key() -> str:
+    for name in ("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_KEY"):
+        v = os.environ.get(name, "").strip()
+        if v:
+            return v
+    return ""
+
+
+SB_CACHE_DAYS = 30
+_sb_by_li: dict[str, dict] = {}
+_sb_by_email: dict[str, dict] = {}
+_sb_lock = threading.Lock()
+
+
+def _sb_headers(prefer: str = "return=representation") -> dict[str, str]:
+    key = supabase_key()
+    if not key:
+        raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY not set")
+    return {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Prefer": prefer,
+    }
+
+
+def _parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _sb_index_row(row: dict) -> None:
+    li = normalize_linkedin(row.get("linkedin") or "")
+    if li:
+        _sb_by_li[li] = row
+    em = (row.get("email") or "").strip().lower()
+    if em and em not in ("n/a", "none", "null", ""):
+        prev = _sb_by_email.get(em)
+        if not prev:
+            _sb_by_email[em] = row
+            return
+        # keep newest updated_at
+        a = _parse_ts(prev.get("updated_at")) or datetime.min.replace(tzinfo=timezone.utc)
+        b = _parse_ts(row.get("updated_at")) or datetime.min.replace(tzinfo=timezone.utc)
+        if b >= a:
+            _sb_by_email[em] = row
+
+
+def load_supabase_lead_index() -> int:
+    """Load pipeline_leads into memory for LinkedIn/email reuse checks."""
+    global _sb_by_li, _sb_by_email
+    _sb_by_li, _sb_by_email = {}, {}
+    if not supabase_key():
+        print("supabase_index skipped (no key)", flush=True)
+        return 0
+    base = SUPABASE_URL.rstrip("/") + "/rest/v1/pipeline_leads"
+    offset = 0
+    page = 1000
+    total = 0
+    while True:
+        url = (
+            f"{base}?select=id,email,linkedin,updated_at,created_at,mv_status,"
+            f"email_source,company_domain,employees,company_size,company_description,"
+            f"location,first_name,last_name"
+            f"&order=id.asc&limit={page}&offset={offset}"
+        )
+        req = urllib.request.Request(url, headers=_sb_headers("count=exact"))
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            batch = json.loads(resp.read().decode() or "[]")
+        if not isinstance(batch, list) or not batch:
+            break
+        for row in batch:
+            _sb_index_row(row)
+            total += 1
+        if len(batch) < page:
+            break
+        offset += page
+    print(
+        f"supabase_index rows={total} emails={len(_sb_by_email)} li={len(_sb_by_li)}",
+        flush=True,
+    )
+    return total
+
+
+def lookup_supabase_lead(lead: dict) -> dict | None:
+    """Find existing pipeline_leads row by LinkedIn, then by pattern emails."""
+    with _sb_lock:
+        li = normalize_linkedin(lead.get("linkedin") or "")
+        if li and li in _sb_by_li:
+            return _sb_by_li[li]
+        for guess in pattern_emails(
+            lead.get("first_name") or "",
+            lead.get("last_name") or "",
+            lead.get("domain") or "",
+        )[:3]:
+            hit = _sb_by_email.get(guess.lower())
+            if hit:
+                return hit
+    return None
+
+
+def try_supabase_email_reuse(
+    lead: dict, excl_emails: set[str]
+) -> dict | None:
+    """Reuse Supabase email if fresh; if >30d, MV-verify then reuse on ok."""
+    existing = lookup_supabase_lead(lead)
+    if not existing:
+        return None
+    email = (existing.get("email") or "").strip()
+    if not email or email.lower() in excl_emails or email.lower() in (
+        "n/a",
+        "none",
+        "null",
+    ):
+        return None
+    updated = _parse_ts(existing.get("updated_at")) or _parse_ts(
+        existing.get("created_at")
+    )
+    now = datetime.now(timezone.utc)
+    age_days = (
+        (now - updated).total_seconds() / 86400.0 if updated else 9999.0
+    )
+    cost_here = 0
+
+    if age_days <= SB_CACHE_DAYS:
+        status = (existing.get("mv_status") or "cached").lower()
+        return {
+            "email": email,
+            "email_status": status or "cached",
+            "email_source": "supabase_cache",
+            "spent_note": "0",
+            "plusvibe_ready": True,
+            "stopped": False,
+            "supabase_id": existing.get("id"),
+            "supabase_age_days": round(age_days, 2),
+        }
+
+    # Stale: re-verify with MV before trusting
+    if not under_cap(2000):
+        return {
+            "email": None,
+            "email_status": None,
+            "email_source": None,
+            "spent_note": "0",
+            "plusvibe_ready": False,
+            "stopped": True,
+        }
+    try:
+        mv, mcost = verify_mv(email)
+        cost_here += mcost
+    except Exception as e:
+        print(f"sb_mv_err {email}: {e}", flush=True)
+        return None
+    if mv in VALID_MV:
+        return {
+            "email": email,
+            "email_status": mv,
+            "email_source": "supabase+mv",
+            "spent_note": f"{cost_here/1e6:.4f}",
+            "plusvibe_ready": True,
+            "stopped": False,
+            "supabase_id": existing.get("id"),
+            "supabase_age_days": round(age_days, 2),
+        }
+    return None
+
+
+def upsert_pipeline_lead(row: dict, source_run: str = "gws_icypeas_sheet2") -> dict | None:
+    """Insert or update pipeline_leads for every found email (thread-safe)."""
+    if not supabase_key():
+        return None
+    email = (row.get("email") or "").strip()
+    if not email or email.lower() in ("n/a", "none", "null"):
+        return None
+    li = (row.get("linkedin") or row.get("linkedin_url") or "").strip() or None
+    domain = row.get("domain") or domain_of(row.get("website") or "")
+    size = row.get("employee_count")
+    size_s = "" if size is None else str(size)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    payload: dict[str, Any] = {
+        "batch_id": row.get("batch_id") or "unknown",
+        "source_run": source_run,
+        "client": "GWS",
+        "campaign_id": row.get("campaign_id") or "C",
+        "offer": row.get("offer"),
+        "first_name": row.get("first_name"),
+        "last_name": row.get("last_name"),
+        "title": row.get("title"),
+        "email": email,
+        "linkedin": li,
+        "company_name": row.get("company_name"),
+        "website": row.get("website") or domain,
+        "company_domain": domain or None,
+        "employees": size_s or None,
+        "company_size": size_s or None,
+        "company_description": row.get("company_description") or None,
+        "company_industry": row.get("industry") or None,
+        "location": row.get("location") or None,
+        "company_address": row.get("location") or None,
+        "mv_status": row.get("email_status"),
+        "email_source": row.get("email_source"),
+        "plusvibe_ready": bool(row.get("plusvibe_ready")),
+        "handoff_status": "staged",
+        "updated_at": now_iso,
+        "raw": {
+            "spent_note": row.get("spent_note"),
+            "company_linkedin": row.get("company_linkedin"),
+            "supabase_age_days": row.get("supabase_age_days"),
+        },
+    }
+    # Drop None values except booleans
+    body = {k: v for k, v in payload.items() if v is not None or isinstance(v, bool)}
+
+    existing = None
+    with _sb_lock:
+        existing = _sb_by_email.get(email.lower())
+        if not existing and li:
+            existing = _sb_by_li.get(normalize_linkedin(li))
+
+    try:
+        if existing and existing.get("id"):
+            url = (
+                SUPABASE_URL.rstrip("/")
+                + f"/rest/v1/pipeline_leads?id=eq.{existing['id']}"
+            )
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode(),
+                headers=_sb_headers(),
+                method="PATCH",
+            )
+        else:
+            url = SUPABASE_URL.rstrip("/") + "/rest/v1/pipeline_leads"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode(),
+                headers=_sb_headers(),
+                method="POST",
+            )
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            data = json.loads(resp.read().decode() or "[]")
+        saved = data[0] if isinstance(data, list) and data else (
+            data if isinstance(data, dict) else None
+        )
+        if saved:
+            with _sb_lock:
+                _sb_index_row(saved)
+        return saved
+    except Exception as e:
+        print(f"supabase_upsert_err {email}: {e}", flush=True)
+        return None
+
+
 def verify_mv(email: str) -> tuple[str, int]:
     if not under_cap(2000):
         return "stopped", 0
@@ -667,7 +925,11 @@ def load_ready_csv(path: Path) -> list[dict]:
 
 
 def resolve_email_cheap(lead: dict, excl_emails: set[str]) -> dict:
-    """Min-credit ladder: pattern → free ContactOut → Blitz. No MV/QE/Trykitt."""
+    """Min-credit ladder: Supabase reuse → pattern → ContactOut → Blitz."""
+    reused = try_supabase_email_reuse(lead, excl_emails)
+    if reused is not None:
+        return reused
+
     d = lead["domain"]
     email = ""
     email_source = ""
@@ -728,9 +990,13 @@ def resolve_email_cheap(lead: dict, excl_emails: set[str]) -> dict:
 
 
 def resolve_email_fast(lead: dict, excl_emails: set[str]) -> dict:
-    """Pattern+MV first; QE/Trykitt only on miss. Charges via thread-safe gate."""
+    """Supabase reuse first; then pattern+MV; QE/Trykitt on miss."""
     if CHEAP_MODE:
         return resolve_email_cheap(lead, excl_emails)
+
+    reused = try_supabase_email_reuse(lead, excl_emails)
+    if reused is not None:
+        return reused
 
     d = lead["domain"]
     email = ""
@@ -968,6 +1234,7 @@ def run(
         f"excludes emails={len(excl_emails)} domains={len(excl_domains)} li={len(excl_li)}",
         flush=True,
     )
+    load_supabase_lead_index()
 
     if not skip_counts:
         for camp in CAMPAIGNS:
@@ -1104,6 +1371,7 @@ def run(
 
             # Apply results serially for domain/email uniqueness
             page_ready = 0
+            sb_upserted = 0
             for lead, res in resolved:
                 if res.get("stopped"):
                     stop = True
@@ -1117,12 +1385,17 @@ def run(
                     "batch_id": batch_id,
                     "plusvibe_ready": res.get("plusvibe_ready"),
                     "spent_note": res.get("spent_note"),
+                    "supabase_age_days": res.get("supabase_age_days"),
                 }
                 all_found.append(row)
                 try:
                     st["spent_usd"] += float(res.get("spent_note") or 0)
                 except ValueError:
                     pass
+                # Every found email → Supabase (with size / description / location)
+                if row.get("email"):
+                    if upsert_pipeline_lead(row):
+                        sb_upserted += 1
                 if not res.get("plusvibe_ready"):
                     continue
                 d = lead["domain"]
@@ -1137,10 +1410,17 @@ def run(
                 page_ready += 1
                 new_ready_this_run += 1
                 ready_rows.append(row)
+                src = res.get("email_source") or ""
                 print(
                     f"  READY {camp['id']} {st['ready']}/{camp['soft_ready']} "
-                    f"{em} {lead['company_name'][:40]} spent=${spent_usd():.4f} "
+                    f"{em} {lead['company_name'][:40]} src={src} "
+                    f"spent=${spent_usd():.4f} "
                     f"rate={new_ready_this_run/max(time.time()-t0,1)*60:.1f}/min",
+                    flush=True,
+                )
+            if sb_upserted:
+                print(
+                    f"  SUPABASE upserted={sb_upserted} page={camp['id']}",
                     flush=True,
                 )
 
@@ -1213,12 +1493,14 @@ def run(
         "db_order": ["icypeas.people.search"],
         "email_order": (
             [
+                "supabase_cache_or_supabase+mv",
                 "pattern",
                 "contactout.people.email.verify",
                 "blitzapi.people.email.find",
             ]
             if cheap
             else [
+                "supabase_cache_or_supabase+mv",
                 "pattern",
                 "millionverifier.people.email.verify",
                 "quickenrich.people.email.find",
@@ -1229,6 +1511,8 @@ def run(
         "cheap_mode": cheap,
         "target_ready": target_ready,
         "contactout_skipped": not cheap,
+        "supabase_reuse_days": SB_CACHE_DAYS,
+        "supabase_upsert": True,
     }
     ready_csv = ready_csv_path
     all_csv = OUT_DIR / f"{batch_id}_all_fast.csv"
