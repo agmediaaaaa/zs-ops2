@@ -5,6 +5,7 @@
 
 -- Enable search_path for functions
 SET search_path TO public;
+SET lock_timeout = '5s';
 
 -- NOTE ON pipeline_leads TABLE:
 -- pipeline_leads (~1k rows) remains as a staging table for PR #11's gws_icypeas_sheet2.py script.
@@ -149,7 +150,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql 
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public;
 
 -- Trigger to auto-update updated_at on lead_lists
@@ -164,14 +165,16 @@ ALTER TABLE lead_lists ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lead_list_members ENABLE ROW LEVEL SECURITY;
 
 -- Service role can do everything (policies can be refined later)
-CREATE POLICY IF NOT EXISTS "Service role full access to lead_lists"
+DROP POLICY IF EXISTS "Service role full access to lead_lists" ON lead_lists;
+CREATE POLICY "Service role full access to lead_lists"
     ON lead_lists
     FOR ALL
     TO service_role
     USING (true)
     WITH CHECK (true);
 
-CREATE POLICY IF NOT EXISTS "Service role full access to lead_list_members"
+DROP POLICY IF EXISTS "Service role full access to lead_list_members" ON lead_list_members;
+CREATE POLICY "Service role full access to lead_list_members"
     ON lead_list_members
     FOR ALL
     TO service_role

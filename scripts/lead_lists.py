@@ -75,7 +75,9 @@ def sb_request(
     prefer: str = "return=representation",
 ) -> Any:
     """Make a Supabase REST API request."""
-    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{path.lstrip('/')}"
+    # URL-encode table name (e.g., "Lead Database" -> "Lead%20Database")
+    encoded_path = urllib.parse.quote(path.lstrip('/'), safe='/?&=')
+    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{encoded_path}"
     if query:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(query)
     
@@ -162,14 +164,15 @@ def cmd_create(args: argparse.Namespace) -> None:
             if not normalized:
                 continue
             
-            # Try to find existing lead in Lead Database
+            # Try to find existing lead in Lead Database (normalized LinkedIn match)
+            # Use exact match on lower(trim("Linkedin")) for efficiency
             existing = sb_request(
                 "GET",
                 "Lead Database",
                 query={
-                    "Linkedin": f"ilike.%{normalized}%",
+                    "Linkedin": f"ilike.{normalized}",  # Exact match, not wildcard
                     "limit": "1",
-                    "select": "id,Linkedin,Email,First Name,Last Name",
+                    "select": 'id,"Linkedin","Email","First Name","Last Name"',
                 }
             )
             
@@ -203,38 +206,80 @@ def cmd_create(args: argparse.Namespace) -> None:
         
         print(f"    Found {len(rows)} rows...")
         
-        # Match or create leads based on LinkedIn URL or email
+        # Collect normalized LinkedIn URLs and emails for batch lookup
+        linkedin_map = {}  # normalized_url -> row_index
+        email_map = {}  # lowercase_email -> row_index
+        
         for i, row in enumerate(rows):
             linkedin = row.get("linkedin") or row.get("linkedin_url") or ""
-            email = row.get("email", "").strip().lower()
+            email = (row.get("email") or "").strip().lower()
             
-            # Try to find existing lead by LinkedIn or email
-            lead_id = None
             if linkedin:
                 normalized = normalize_linkedin(linkedin)
+                if normalized:
+                    linkedin_map[normalized] = i
+            
+            if email and email not in ("", "n/a", "none", "null"):
+                email_map[email] = i
+        
+        # Batch lookup by LinkedIn (use lower(trim("Linkedin")) for index)
+        lead_id_map = {}  # row_index -> lead_id
+        
+        if linkedin_map:
+            # Split into batches of 100 for in.(...) queries
+            li_list = list(linkedin_map.keys())
+            for batch_start in range(0, len(li_list), 100):
+                batch = li_list[batch_start:batch_start + 100]
+                # PostgREST in filter syntax
+                in_clause = ",".join(f'"{li}"' for li in batch)
+                
                 existing = sb_request(
                     "GET",
                     "Lead Database",
                     query={
-                        "Linkedin": f"ilike.%{normalized}%",
-                        "limit": "1",
-                        "select": "id",
+                        "select": 'id,"Linkedin"',
+                        "or": f'({",".join(f"Linkedin.ilike.{li}" for li in batch)})',
+                        "limit": str(len(batch)),
                     }
                 )
-                if existing and len(existing) > 0:
-                    lead_id = existing[0]["id"]
-            
-            if not lead_id and email and email not in ("", "n/a", "none", "null"):
+                
+                if existing:
+                    for lead in existing:
+                        normalized = normalize_linkedin(lead.get("Linkedin") or "")
+                        if normalized in linkedin_map:
+                            lead_id_map[linkedin_map[normalized]] = lead["id"]
+        
+        # Batch lookup by email (use lower(btrim("Email")) for index)
+        if email_map:
+            em_list = list(email_map.keys())
+            for batch_start in range(0, len(em_list), 100):
+                batch = em_list[batch_start:batch_start + 100]
+                
                 existing = sb_request(
                     "GET",
                     "Lead Database",
-                    query={"Email": f"eq.{email}", "limit": "1", "select": "id"}
+                    query={
+                        "select": 'id,"Email"',
+                        "or": f'({",".join(f"Email.ilike.{em}" for em in batch)})',
+                        "limit": str(len(batch)),
+                    }
                 )
-                if existing and len(existing) > 0:
-                    lead_id = existing[0]["id"]
+                
+                if existing:
+                    for lead in existing:
+                        email = (lead.get("Email") or "").strip().lower()
+                        if email in email_map and email_map[email] not in lead_id_map:
+                            lead_id_map[email_map[email]] = lead["id"]
+        
+        # Create missing leads and collect all lead_ids
+        for i, row in enumerate(rows):
+            lead_id = lead_id_map.get(i)
             
             # Create if not found
             if not lead_id:
+                linkedin = row.get("linkedin") or row.get("linkedin_url") or ""
+                email = (row.get("email") or "").strip().lower()
+                
                 new_lead = sb_request(
                     "POST",
                     "Lead Database",
@@ -415,7 +460,7 @@ def cmd_show(args: argparse.Namespace) -> None:
             "lead_list_members",
             query={
                 "list_id": f"eq.{list_id}",
-                "select": "lead_id,enrichment_status,cost_micro,Lead Database(First Name,Last Name,Email,Company Name)",
+                "select": 'lead_id,enrichment_status,cost_micro,"Lead Database"("First Name","Last Name","Email","Company Name")',
                 "limit": str(args.sample),
             }
         )
@@ -448,7 +493,7 @@ def cmd_enrich(args: argparse.Namespace) -> None:
         query={
             "list_id": f"eq.{list_id}",
             "enrichment_status": "eq.pending",
-            "select": "lead_id,pipeline_leads(id,linkedin,email,first_name,last_name,company_name)",
+            "select": 'lead_id,"Lead Database"(id,"Linkedin","Email","First Name","Last Name","Company Name")',
         }
     )
     
@@ -500,17 +545,16 @@ def cmd_enrich(args: argparse.Namespace) -> None:
         {"status": "enriching", "enrichment_started_at": datetime.now(timezone.utc).isoformat()}
     )
     
-    # Import the enrichment logic from gws_icypeas_sheet2.py
-    # For now, print a message that this should be wired up
-    print("TODO: Wire up enrichment pipeline from gws_icypeas_sheet2.py")
-    print("This will:")
+    # Use the enrichment runner instead of this command
+    print("Use enrich_list.py for actual enrichment:")
+    print(f"  ./scripts/enrich_list.py {list_id} --confirm-spend {confirm_spend}")
+    print("\nThis will:")
     print("  1. Process each pending lead through the email ladder")
     print("  2. Update lead_list_members.enrichment_status as we go")
     print("  3. Track cost_micro per lead")
     print("  4. Stop if we hit cost cap")
-    print("  5. Update pipeline_leads with found emails")
-    print("\nFor now, use the existing gws_icypeas_sheet2.py script and link")
-    print("the results back to this list manually.")
+    print("  5. Update Lead Database with found emails")
+    print("  6. Generate detailed run report")
     
     # Mark as enriched (placeholder)
     # sb_request(
@@ -542,7 +586,7 @@ def cmd_export(args: argparse.Namespace) -> None:
         query={
             "list_id": f"eq.{list_id}",
             "enrichment_status": "eq.enriched",
-            "select": "lead_id,cost_micro,Lead Database(*)",
+            "select": 'lead_id,cost_micro,"Lead Database"(*)',
         }
     )
     

@@ -63,7 +63,9 @@ def sb_request(
     prefer: str = "return=representation",
 ) -> Any:
     """Make a Supabase REST API request."""
-    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{path.lstrip('/')}"
+    # URL-encode table name (e.g., "Lead Database" -> "Lead%20Database")
+    encoded_path = urllib.parse.quote(path.lstrip('/'), safe='/?&=')
+    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{encoded_path}"
     if query:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(query)
 
@@ -192,16 +194,33 @@ def fetch_list_pending_leads(list_id: str) -> tuple[dict, list[dict]]:
     
     lst = lists[0]
     
-    # Fetch pending leads from Lead Database
-    members = sb_request(
-        "GET",
-        "lead_list_members",
-        query={
-            "list_id": f"eq.{list_id}",
-            "enrichment_status": "eq.pending",
-            "select": "lead_id,Lead Database(id,Linkedin,Email,First Name,Last Name,Company Name,Website,location,company_description,company_size)",
-        }
-    )
+    # Fetch pending leads from Lead Database (page if >1000)
+    members = []
+    offset = 0
+    page_size = 1000
+    
+    while True:
+        batch = sb_request(
+            "GET",
+            "lead_list_members",
+            query={
+                "list_id": f"eq.{list_id}",
+                "enrichment_status": "eq.pending",
+                "select": 'lead_id,"Lead Database"(id,"Linkedin","Email","First Name","Last Name","Company Name","Website",location,company_description,company_size)',
+                "limit": str(page_size),
+                "offset": str(offset),
+            }
+        )
+        
+        if not batch or len(batch) == 0:
+            break
+        
+        members.extend(batch)
+        
+        if len(batch) < page_size:
+            break
+        
+        offset += page_size
 
     if not members:
         return lst, []
@@ -286,15 +305,32 @@ def update_member_status(
 def update_list_counts(list_id: str) -> None:
     """Recalculate and update list counts (called after batch processing)."""
     try:
-        # Count by status
-        members = sb_request(
-            "GET",
-            "lead_list_members",
-            query={
-                "list_id": f"eq.{list_id}",
-                "select": "enrichment_status,cost_micro,lead_id,Lead Database(Email)",
-            }
-        )
+        # Count by status - page through if >1000 rows
+        members = []
+        offset = 0
+        page_size = 1000
+        
+        while True:
+            batch = sb_request(
+                "GET",
+                "lead_list_members",
+                query={
+                    "list_id": f"eq.{list_id}",
+                    "select": 'enrichment_status,cost_micro,lead_id,"Lead Database"("Email")',
+                    "limit": str(page_size),
+                    "offset": str(offset),
+                }
+            )
+            
+            if not batch or len(batch) == 0:
+                break
+            
+            members.extend(batch)
+            
+            if len(batch) < page_size:
+                break
+            
+            offset += page_size
         
         if not members:
             return
