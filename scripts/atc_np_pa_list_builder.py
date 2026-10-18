@@ -37,9 +37,17 @@ USER_AGENT = (
 )
 CLIENT = "ATC"
 LIST_NAME = "ATC NP/PA clinic owners Oct 18"
-SOURCE = "treg.to"
+SOURCE = "treg.to / icypeas"
 MAX_PER_COMPANY = 2
 VALID_MV = {"ok", "catch_all", "valid", "smtp_valid", "catch_all_valid"}
+# Prefer company description from people-search rows (Icypeas lastCompanyDescription).
+# Only Blitz company.enrich when LinkedIn URL is already on the row and desc is empty.
+REQUIRE_INLINE_DESC = True
+ICY_INDUSTRIES = [
+    "Medical Practices",
+    "Hospitals and Health Care",
+    "Mental Health Care",
+]
 
 INCLUDE_INDUSTRIES = [
     "medical practices",
@@ -355,13 +363,77 @@ def search_body(limit: int = 50) -> dict[str, Any]:
     }
 
 
+def icypeas_query() -> dict[str, Any]:
+    return {
+        "currentJobTitle": {
+            "include": TITLES_INCLUDE,
+            "exclude": [
+                "VP",
+                "Vice President",
+                "Intern",
+                "Student",
+                "Consultant",
+                "Coordinator",
+                "Assistant",
+            ],
+        },
+        "location": {"include": ["United States", "US"]},
+        "keyword": {
+            "include": KEYWORDS,
+            "exclude": KEYWORD_EXCLUDE,
+        },
+        "currentCompany.headcount": {">=": 2, "<=": 500},
+        "currentCompany.industry": {"include": ICY_INDUSTRIES},
+    }
+
+
 def free_count() -> int:
-    body = search_body(limit=1)
-    body.pop("limit", None)
-    data, _ = treg("POST", "/call/leadsforge.people.search.count", body)
+    data, _ = treg(
+        "POST",
+        "/call/icypeas.people.search.count",
+        {"query": icypeas_query()},
+    )
     if isinstance(data, dict):
-        return int(data.get("totalCount") or 0)
+        return int(data.get("total") or data.get("count") or 0)
     return 0
+
+
+def parse_icypeas_lead(raw: dict) -> dict[str, Any] | None:
+    """Normalize Icypeas row; company description comes from the search hit."""
+    first = (raw.get("firstname") or raw.get("firstName") or "").strip()
+    last = (raw.get("lastname") or raw.get("lastName") or "").strip()
+    title = (raw.get("lastJobTitle") or raw.get("headline") or "").strip()
+    linkedin = (raw.get("profileUrl") or "").strip()
+    company_name = (raw.get("lastCompanyName") or "").strip()
+    website = (raw.get("lastCompanyWebsite") or "").strip()
+    company_li = (raw.get("lastCompanyUrl") or "").strip()
+    location = (raw.get("address") or "").strip()
+    emp = raw.get("lastCompanySize")
+    desc = (raw.get("lastCompanyDescription") or "").strip()
+    industry = (raw.get("lastCompanyIndustry") or "").strip()
+    domain = domain_of({"website": website, "domain": ""})
+    if not domain and website:
+        domain = domain_of({"domain": website})
+    if not first or not last:
+        return None
+    return {
+        "id": linkedin or f"{first}|{last}|{domain}",
+        "firstName": first,
+        "lastName": last,
+        "jobTitle": title,
+        "linkedinUrl": linkedin,
+        "location": {"raw": location},
+        "company_description": desc,
+        "company": {
+            "name": company_name,
+            "domain": domain,
+            "website": website,
+            "linkedinUrl": company_li,
+            "employeeCount": emp,
+            "industry": industry,
+            "description": desc,
+        },
+    }
 
 
 def load_plusvibe_suppress(workspace_id: str) -> set[str]:
@@ -779,31 +851,52 @@ def create_list_with_members(
     return list_id
 
 
-def collect_candidates(need: int) -> list[dict]:
-    """Page search until we have enough post-filtered candidates (overpull)."""
-    target = max(need * 4, 80)  # overpull for miss/verify/plusvibe drop
-    cursor = None
+def collect_candidates(
+    need: int,
+    spend_budget_micro: int | None = None,
+) -> tuple[list[dict], int]:
+    """Icypeas people search — company description is on the row (lastCompanyDescription).
+
+    Returns (candidates, search_cost_micro). Caps search spend if spend_budget_micro set.
+    """
+    target = max(need * 5, 120)  # overpull for find/verify/plusvibe drop
+    token: str | None = None
     by_domain: dict[str, list[dict]] = {}
     seen_ids: set[str] = set()
     pages = 0
-    while sum(len(v) for v in by_domain.values()) < target and pages < 40:
-        body = search_body(limit=50)
-        query = {"cursor": cursor} if cursor else None
-        data, meta = treg(
-            "POST",
-            "/call/leadsforge.people.search",
-            body,
-            query=query,
-        )
+    search_cost = 0
+    with_desc = 0
+    while sum(len(v) for v in by_domain.values()) < target and pages < 80:
+        if spend_budget_micro is not None and search_cost + 40_000 > spend_budget_micro:
+            # ~100 results * $0.00038 ≈ $0.038; stop before blowing search budget
+            print(
+                f"search_spend_cap search_cost=${search_cost/1e6:.4f} "
+                f"kept={sum(len(v) for v in by_domain.values())}",
+                flush=True,
+            )
+            break
+        body: dict[str, Any] = {
+            "query": icypeas_query(),
+            "pagination": {"size": 100},
+        }
+        if token:
+            body["pagination"]["token"] = token
+        data, meta = treg("POST", "/call/icypeas.people.search", body)
+        cost = int(meta.get("cost_micro") or 0)
+        search_cost += cost
         pages += 1
-        leads = (data or {}).get("leads") or []
-        cursor = (data or {}).get("cursor")
+        leads_raw = (data or {}).get("leads") or []
+        token = ((data or {}).get("pagination") or {}).get("token")
         print(
-            f"search_page={pages} got={len(leads)} cost_micro={meta.get('cost_micro')} "
+            f"icy_page={pages} got={len(leads_raw)} cost_micro={cost} "
+            f"search_spent=${search_cost/1e6:.4f} "
             f"kept={sum(len(v) for v in by_domain.values())}",
             flush=True,
         )
-        for lead in leads:
+        for raw in leads_raw:
+            lead = parse_icypeas_lead(raw)
+            if not lead:
+                continue
             pid = str(lead.get("id") or "")
             if not pid or pid in seen_ids:
                 continue
@@ -815,45 +908,57 @@ def collect_candidates(need: int) -> list[dict]:
             domain = domain_of(co)
             if not domain:
                 continue
-            # company name exclude soft match
             cname = (co.get("name") or "").lower()
             if any(x.lower() in cname for x in EXCLUDE_COMPANIES if cname):
                 continue
+            if REQUIRE_INLINE_DESC and not (lead.get("company_description") or "").strip():
+                # Prefer rows that already carry a description — skip empty to avoid
+                # a second paid company-enrich call.
+                continue
+            if lead.get("company_description"):
+                with_desc += 1
             bucket = by_domain.setdefault(domain, [])
-            if len(bucket) >= MAX_PER_COMPANY:
-                # keep higher-rank titles
-                bucket.append(lead)
-                bucket.sort(key=lambda L: title_rank(L.get("jobTitle") or ""))
-                del bucket[MAX_PER_COMPANY:]
-            else:
-                bucket.append(lead)
-                bucket.sort(key=lambda L: title_rank(L.get("jobTitle") or ""))
-        if not leads or not cursor:
+            bucket.append(lead)
+            bucket.sort(key=lambda L: title_rank(L.get("jobTitle") or ""))
+            del bucket[MAX_PER_COMPANY:]
+        if not leads_raw or not token:
             break
         time.sleep(0.05)
     flat: list[dict] = []
-    for domain, people in by_domain.items():
-        for p in people[:MAX_PER_COMPANY]:
-            flat.append(p)
+    for people in by_domain.values():
+        flat.extend(people[:MAX_PER_COMPANY])
     flat.sort(key=lambda L: title_rank(L.get("jobTitle") or ""))
-    print(f"candidates={len(flat)} domains={len(by_domain)}", flush=True)
-    return flat
+    print(
+        f"candidates={len(flat)} domains={len(by_domain)} "
+        f"with_inline_desc={with_desc} search_cost=${search_cost/1e6:.4f}",
+        flush=True,
+    )
+    return flat, search_cost
 
 
 def run_build(mode: str, confirm_spend: float, ready_target: int) -> dict:
+    global LIST_NAME
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     cap_micro = int(round(confirm_spend * 1_000_000))
     spent_micro = 0
+    if mode == "full":
+        LIST_NAME = f"ATC NP/PA clinic owners Oct 18 ${confirm_spend:g} run"
     tam = free_count()
     print(f"TAM_people={tam:,} mode={mode} ready_target={ready_target} cap=${confirm_spend}", flush=True)
 
     pv = load_plusvibe_suppress(PLUSVIBE_WS)
-    candidates = collect_candidates(ready_target)
+    # Reserve ~20% of budget for Icypeas search pages (desc comes free with rows)
+    search_budget = int(cap_micro * 0.20)
+    candidates, search_cost = collect_candidates(
+        ready_target, spend_budget_micro=search_budget
+    )
+    spent_micro += search_cost
 
     ready_rows: list[dict] = []
     lead_ids: list[int] = []
     stats = {
         "searched": len(candidates),
+        "search_cost_usd": round(search_cost / 1e6, 6),
         "skipped_no_domain": 0,
         "skipped_known_supabase": 0,
         "plusvibe_excluded": 0,
@@ -864,9 +969,12 @@ def run_build(mode: str, confirm_spend: float, ready_target: int) -> dict:
         "failed_find": 0,
         "failed_verify": 0,
         "failed_company_desc": 0,
+        "company_desc_from_search": 0,
         "company_enrich_hits": 0,
         "emails_by_source": {},
-        "cost_by_provider": {},
+        "cost_by_provider": {
+            "icypeas.people.search": round(search_cost / 1e6, 6),
+        },
     }
 
     for lead in candidates:
@@ -958,52 +1066,61 @@ def run_build(mode: str, confirm_spend: float, ready_target: int) -> dict:
             stats["failed_verify"] += 1
             continue
 
-        # Company description required for campaigns (Blitz → Icypeas)
-        if spent_micro + 2000 > cap_micro:
-            break
-        try:
-            cfields, ccost, cserved = enrich_company_profile(
-                domain,
-                company_linkedin="",
-                company_name=(co.get("name") or ""),
+        # Company description: prefer Icypeas search field (already paid with the row).
+        # Only Blitz enrich if we already have company LinkedIn and desc is still empty.
+        company_description = (
+            (lead.get("company_description") or co.get("description") or "")
+        ).strip()
+        company_linkedin = (co.get("linkedinUrl") or co.get("linkedin") or "").strip()
+        company_name = (co.get("name") or domain).strip()
+        if company_description:
+            stats["company_desc_from_search"] += 1
+        elif company_linkedin and spent_micro + 1000 <= cap_micro:
+            try:
+                cfields, ccost, cserved = enrich_company_profile(
+                    domain,
+                    company_linkedin=company_linkedin,
+                    company_name=company_name,
+                )
+            except Exception as e:
+                print(f"company_enrich_err @{domain}: {e}", flush=True)
+                stats["failed_company_desc"] += 1
+                continue
+            spent_micro += ccost
+            stats["cost_by_provider"][cserved] = (
+                stats["cost_by_provider"].get(cserved, 0) + ccost / 1e6
             )
-        except Exception as e:
-            print(f"company_enrich_err @{domain}: {e}", flush=True)
-            stats["failed_company_desc"] += 1
-            continue
-        spent_micro += ccost
-        stats["cost_by_provider"][cserved] = (
-            stats["cost_by_provider"].get(cserved, 0) + ccost / 1e6
-        )
-        company_description = (cfields.get("company_description") or "").strip()
+            company_description = (cfields.get("company_description") or "").strip()
+            company_name = cfields.get("company_name") or company_name
+            company_linkedin = cfields.get("company_linkedin") or company_linkedin
+            if company_description:
+                stats["company_enrich_hits"] += 1
         if not company_description:
             stats["failed_company_desc"] += 1
             print(f"skip_no_desc @{domain} spent=${spent_micro/1e6:.4f}", flush=True)
             continue
-        stats["company_enrich_hits"] += 1
 
         loc = lead.get("location") or {}
-        location = ", ".join(
-            x for x in [loc.get("city"), loc.get("state"), loc.get("country")] if x
+        location = (
+            loc.get("raw")
+            or ", ".join(
+                x for x in [loc.get("city"), loc.get("state"), loc.get("country")] if x
+            )
         )
         website = co.get("website") or (f"https://{domain}" if domain else "")
-        company_name = (
-            cfields.get("company_name")
-            or co.get("name")
-            or domain
-        )
+        person_li = lead.get("linkedinUrl") or linkedin or ""
         row = {
             "first_name": first,
             "last_name": last,
             "email": email,
-            "linkedin": linkedin if linkedin.startswith("http") else (f"https://{linkedin}" if linkedin else ""),
+            "linkedin": person_li if person_li.startswith("http") else (f"https://{person_li}" if person_li else ""),
             "title": lead.get("jobTitle") or "",
             "company_name": company_name,
             "website": website,
             "company_size": str(co.get("employeeCount") or ""),
             "company_industry": co.get("industry") or "",
             "company_description": company_description,
-            "company_linkedin": cfields.get("company_linkedin") or "",
+            "company_linkedin": company_linkedin,
             "location": location,
             "email_source": email_source,
             "email_status": mv_status,
@@ -1040,11 +1157,10 @@ def run_build(mode: str, confirm_spend: float, ready_target: int) -> dict:
         "plusvibe_suppress_size": len(pv),
         "stats": stats,
         "tool_order": [
-            "leadsforge.people.search",
+            "icypeas.people.search (lastCompanyDescription inline — preferred)",
             "treg.people.email.find (exclude aiark, max $0.006)",
             "millionverifier.people.email.verify",
-            "blitzapi.companies.domain-to-linkedin + blitzapi.companies.enrich (about)",
-            "icypeas.companies.enrich fallback for description",
+            "blitzapi.companies.enrich only if search desc missing + company LI present",
             "plusvibe workspace suppress",
             "supabase Lead Database + lead_lists",
         ],
