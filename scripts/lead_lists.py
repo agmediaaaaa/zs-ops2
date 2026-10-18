@@ -118,12 +118,100 @@ def domain_of(website: str) -> str:
     return d
 
 
+LOOKUP_BATCH = 80  # keep PostgREST or=(...) URLs under limits
+INSERT_BATCH = 200
+
+
+def _batch_lookup_linkedin(normalized_urls: list[str]) -> dict[str, int]:
+    """Map normalized LinkedIn → lead id via batched GETs (not 1 call/lead)."""
+    found: dict[str, int] = {}
+    if not normalized_urls:
+        return found
+    for start in range(0, len(normalized_urls), LOOKUP_BATCH):
+        batch = normalized_urls[start : start + LOOKUP_BATCH]
+        existing = sb_request(
+            "GET",
+            "Lead Database",
+            query={
+                "select": 'id,"Linkedin"',
+                "or": f'({",".join(f"Linkedin.ilike.{li}" for li in batch)})',
+                "limit": str(len(batch) * 2),
+            },
+        )
+        for lead in existing or []:
+            norm = normalize_linkedin(lead.get("Linkedin") or "")
+            if norm and norm not in found:
+                found[norm] = lead["id"]
+    return found
+
+
+def _batch_lookup_email(emails: list[str]) -> dict[str, int]:
+    """Map lowercase email → lead id via batched GETs."""
+    found: dict[str, int] = {}
+    if not emails:
+        return found
+    for start in range(0, len(emails), LOOKUP_BATCH):
+        batch = emails[start : start + LOOKUP_BATCH]
+        existing = sb_request(
+            "GET",
+            "Lead Database",
+            query={
+                "select": 'id,"Email"',
+                "or": f'({",".join(f"Email.eq.{em}" for em in batch)})',
+                "limit": str(len(batch) * 2),
+            },
+        )
+        for lead in existing or []:
+            email = (lead.get("Email") or "").strip().lower()
+            if email and email not in found:
+                found[email] = lead["id"]
+    return found
+
+
+def _batch_insert_leads(payloads: list[dict]) -> list[dict]:
+    """Bulk POST Lead Database rows; returns created rows with ids."""
+    created: list[dict] = []
+    if not payloads:
+        return created
+    for start in range(0, len(payloads), INSERT_BATCH):
+        chunk = payloads[start : start + INSERT_BATCH]
+        # Drop None values so PostgREST accepts the row
+        clean = [
+            {k: v for k, v in row.items() if v is not None and v != ""}
+            for row in chunk
+        ]
+        clean = [row for row in clean if row]
+        if not clean:
+            continue
+        result = sb_request("POST", "Lead Database", clean)
+        if isinstance(result, list):
+            created.extend(result)
+        print(f"    Inserted Lead Database batch {start + len(clean)}/{len(payloads)}...", flush=True)
+    return created
+
+
+def _batch_insert_members(list_id: str, lead_ids: list[Any]) -> None:
+    members = [
+        {
+            "list_id": list_id,
+            "lead_id": lid,
+            "enrichment_status": "pending",
+        }
+        for lid in lead_ids
+    ]
+    for i in range(0, len(members), 500):
+        batch = members[i : i + 500]
+        sb_request("POST", "lead_list_members", batch)
+        print(f"    Added members batch {i + len(batch)}/{len(members)}...", flush=True)
+
+
 # ============================================================================
 # CREATE COMMAND
 # ============================================================================
 
 def cmd_create(args: argparse.Namespace) -> None:
-    """Create a new lead list from scraped/imported data."""
+    """Create a new lead list from scraped/imported data (bulk Supabase ops)."""
+    t0 = time.time()
     # Create the list record
     list_data = {
         "client": args.client,
@@ -134,207 +222,163 @@ def cmd_create(args: argparse.Namespace) -> None:
         "cost_cap_usd": args.cost_cap if args.cost_cap else None,
         "metadata": json.loads(args.metadata) if args.metadata else {},
     }
-    
+
     result = sb_request("POST", "lead_lists", list_data)
     if not result or not isinstance(result, list) or not result:
         raise RuntimeError("Failed to create lead list")
-    
+
     list_record = result[0]
     list_id = list_record["list_id"]
     print(f"✓ Created list: {list_id}")
     print(f"  Client: {args.client}")
     print(f"  Name: {args.name}")
     print(f"  Source: {args.source}")
-    
-    # Load leads from input
-    leads_to_add: list[dict] = []
-    
+
+    lead_ids: list[Any] = []
+
     if args.linkedin_urls:
-        # Read LinkedIn URLs from file
         urls_path = Path(args.linkedin_urls)
         if not urls_path.exists():
             raise SystemExit(f"Error: LinkedIn URLs file not found: {urls_path}")
-        
+
         urls = [line.strip() for line in urls_path.read_text().splitlines() if line.strip()]
-        print(f"  Loading {len(urls)} LinkedIn URLs...")
-        
-        # Find or create leads for each LinkedIn URL
-        for i, url in enumerate(urls):
-            normalized = normalize_linkedin(url)
-            if not normalized:
+        print(f"  Loading {len(urls)} LinkedIn URLs (bulk)...", flush=True)
+
+        # Dedupe while preserving order
+        seen: set[str] = set()
+        items: list[tuple[str, str]] = []  # (normalized, raw_url)
+        for url in urls:
+            norm = normalize_linkedin(url)
+            if not norm or norm in seen:
                 continue
-            
-            # Try to find existing lead in Lead Database (normalized LinkedIn match)
-            # Use exact match on lower(trim("Linkedin")) for efficiency
-            existing = sb_request(
-                "GET",
-                "Lead Database",
-                query={
-                    "Linkedin": f"ilike.{normalized}",  # Exact match, not wildcard
-                    "limit": "1",
-                    "select": 'id,"Linkedin","Email","First Name","Last Name"',
-                }
-            )
-            
-            if existing and len(existing) > 0:
-                leads_to_add.append({"lead_id": existing[0]["id"], "source": "existing"})
-            else:
-                # Create placeholder lead (to be enriched later)
-                new_lead = sb_request(
-                    "POST",
-                    "Lead Database",
-                    {
-                        "Linkedin": url if url.startswith("http") else f"https://{url}",
-                    }
-                )
-                if new_lead and len(new_lead) > 0:
-                    leads_to_add.append({"lead_id": new_lead[0]["id"], "source": "created"})
-            
-            if (i + 1) % 100 == 0:
-                print(f"    Processed {i + 1}/{len(urls)}...")
-    
+            seen.add(norm)
+            items.append((norm, url if url.startswith("http") else f"https://{url}"))
+
+        existing = _batch_lookup_linkedin([n for n, _ in items])
+        print(f"    Existing in Lead Database: {len(existing)}", flush=True)
+
+        to_create = [(n, raw) for n, raw in items if n not in existing]
+        created_rows = _batch_insert_leads([{"Linkedin": raw} for _, raw in to_create])
+        for row in created_rows:
+            norm = normalize_linkedin(row.get("Linkedin") or "")
+            if norm and "id" in row:
+                existing[norm] = row["id"]
+
+        # Any still missing (insert race / filter miss): one re-lookup pass
+        still = [n for n, _ in items if n not in existing]
+        if still:
+            existing.update(_batch_lookup_linkedin(still))
+
+        for norm, _ in items:
+            lid = existing.get(norm)
+            if lid:
+                lead_ids.append(lid)
+
     elif args.csv:
-        # Import from CSV
         csv_path = Path(args.csv)
         if not csv_path.exists():
             raise SystemExit(f"Error: CSV file not found: {csv_path}")
-        
-        print(f"  Importing from CSV: {csv_path}")
+
+        print(f"  Importing from CSV (bulk): {csv_path}", flush=True)
         with csv_path.open(newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-        
-        print(f"    Found {len(rows)} rows...")
-        
-        # Collect normalized LinkedIn URLs and emails for batch lookup
-        linkedin_map = {}  # normalized_url -> row_index
-        email_map = {}  # lowercase_email -> row_index
-        
-        for i, row in enumerate(rows):
+            rows = list(csv.DictReader(f))
+        print(f"    Found {len(rows)} rows...", flush=True)
+
+        row_meta: list[dict[str, Any]] = []
+        for row in rows:
             linkedin = row.get("linkedin") or row.get("linkedin_url") or ""
             email = (row.get("email") or "").strip().lower()
-            
-            if linkedin:
-                normalized = normalize_linkedin(linkedin)
-                if normalized:
-                    linkedin_map[normalized] = i
-            
-            if email and email not in ("", "n/a", "none", "null"):
-                email_map[email] = i
-        
-        # Batch lookup by LinkedIn (use lower(trim("Linkedin")) for index)
-        lead_id_map = {}  # row_index -> lead_id
-        
-        if linkedin_map:
-            # Split into batches of 100 for in.(...) queries
-            li_list = list(linkedin_map.keys())
-            for batch_start in range(0, len(li_list), 100):
-                batch = li_list[batch_start:batch_start + 100]
-                # PostgREST in filter syntax
-                in_clause = ",".join(f'"{li}"' for li in batch)
-                
-                existing = sb_request(
-                    "GET",
-                    "Lead Database",
-                    query={
-                        "select": 'id,"Linkedin"',
-                        "or": f'({",".join(f"Linkedin.ilike.{li}" for li in batch)})',
-                        "limit": str(len(batch)),
-                    }
-                )
-                
-                if existing:
-                    for lead in existing:
-                        normalized = normalize_linkedin(lead.get("Linkedin") or "")
-                        if normalized in linkedin_map:
-                            lead_id_map[linkedin_map[normalized]] = lead["id"]
-        
-        # Batch lookup by email (use lower(btrim("Email")) for index)
-        if email_map:
-            em_list = list(email_map.keys())
-            for batch_start in range(0, len(em_list), 100):
-                batch = em_list[batch_start:batch_start + 100]
-                
-                existing = sb_request(
-                    "GET",
-                    "Lead Database",
-                    query={
-                        "select": 'id,"Email"',
-                        "or": f'({",".join(f"Email.ilike.{em}" for em in batch)})',
-                        "limit": str(len(batch)),
-                    }
-                )
-                
-                if existing:
-                    for lead in existing:
-                        email = (lead.get("Email") or "").strip().lower()
-                        if email in email_map and email_map[email] not in lead_id_map:
-                            lead_id_map[email_map[email]] = lead["id"]
-        
-        # Create missing leads and collect all lead_ids
-        for i, row in enumerate(rows):
-            lead_id = lead_id_map.get(i)
-            
-            # Create if not found
-            if not lead_id:
-                linkedin = row.get("linkedin") or row.get("linkedin_url") or ""
-                email = (row.get("email") or "").strip().lower()
-                
-                new_lead = sb_request(
-                    "POST",
-                    "Lead Database",
-                    {
-                        "Linkedin": linkedin if linkedin.startswith("http") else (f"https://{linkedin}" if linkedin else None),
-                        "Email": email if email and email not in ("", "n/a", "none", "null") else None,
+            if email in ("", "n/a", "none", "null"):
+                email = ""
+            norm = normalize_linkedin(linkedin) if linkedin else ""
+            row_meta.append(
+                {
+                    "norm": norm,
+                    "email": email,
+                    "payload": {
+                        "Linkedin": (
+                            linkedin
+                            if linkedin.startswith("http")
+                            else (f"https://{linkedin}" if linkedin else None)
+                        ),
+                        "Email": email or None,
                         "First Name": row.get("first_name") or row.get("First Name"),
                         "Last Name": row.get("last_name") or row.get("Last Name"),
                         "Company Name": row.get("company_name") or row.get("Company Name"),
                         "Website": row.get("website") or row.get("Website"),
-                    }
-                )
-                if new_lead and len(new_lead) > 0:
-                    lead_id = new_lead[0]["id"]
-            
-            if lead_id:
-                leads_to_add.append({"lead_id": lead_id, "source": "csv"})
-            
-            if (i + 1) % 100 == 0:
-                print(f"    Processed {i + 1}/{len(rows)}...")
-    
-    # Add leads to the list via lead_list_members
-    if leads_to_add:
-        print(f"  Adding {len(leads_to_add)} leads to list...")
-        
-        # Batch insert into lead_list_members
-        members = [
-            {
-                "list_id": list_id,
-                "lead_id": lead["lead_id"],
-                "enrichment_status": "pending",
-            }
-            for lead in leads_to_add
-        ]
-        
-        # Insert in batches of 500 to avoid request size limits
-        batch_size = 500
-        for i in range(0, len(members), batch_size):
-            batch = members[i:i + batch_size]
-            sb_request("POST", "lead_list_members", batch)
-            print(f"    Added batch {i + batch_size}/{len(members)}...")
-        
-        # Update total_leads count
+                    },
+                }
+            )
+
+        li_keys = [m["norm"] for m in row_meta if m["norm"]]
+        em_keys = [m["email"] for m in row_meta if m["email"]]
+        by_li = _batch_lookup_linkedin(list(dict.fromkeys(li_keys)))
+        by_em = _batch_lookup_email(list(dict.fromkeys(em_keys)))
+        print(
+            f"    Lookup hits: linkedin={len(by_li)} email={len(by_em)}",
+            flush=True,
+        )
+
+        missing_payloads: list[dict] = []
+        missing_keys: list[tuple[str, str]] = []  # (norm, email) aligned with payloads
+        for m in row_meta:
+            lid = None
+            if m["norm"] and m["norm"] in by_li:
+                lid = by_li[m["norm"]]
+            elif m["email"] and m["email"] in by_em:
+                lid = by_em[m["email"]]
+            if lid:
+                m["lead_id"] = lid
+            else:
+                m["lead_id"] = None
+                missing_payloads.append(m["payload"])
+                missing_keys.append((m["norm"], m["email"]))
+
+        created_rows = _batch_insert_leads(missing_payloads)
+        # Map created rows back by linkedin/email
+        for row in created_rows:
+            norm = normalize_linkedin(row.get("Linkedin") or "")
+            email = (row.get("Email") or "").strip().lower()
+            if norm:
+                by_li[norm] = row["id"]
+            if email:
+                by_em[email] = row["id"]
+
+        for m in row_meta:
+            if m.get("lead_id"):
+                lead_ids.append(m["lead_id"])
+                continue
+            lid = None
+            if m["norm"] and m["norm"] in by_li:
+                lid = by_li[m["norm"]]
+            elif m["email"] and m["email"] in by_em:
+                lid = by_em[m["email"]]
+            if lid:
+                lead_ids.append(lid)
+
+    # Deduplicate lead_ids while preserving order
+    seen_ids: set[Any] = set()
+    uniq_ids: list[Any] = []
+    for lid in lead_ids:
+        if lid in seen_ids:
+            continue
+        seen_ids.add(lid)
+        uniq_ids.append(lid)
+
+    if uniq_ids:
+        print(f"  Adding {len(uniq_ids)} leads to list (bulk members)...", flush=True)
+        _batch_insert_members(list_id, uniq_ids)
         sb_request(
             "PATCH",
             f"lead_lists?list_id=eq.{list_id}",
-            {"total_leads": len(leads_to_add)}
+            {"total_leads": len(uniq_ids)},
         )
-        
-        print(f"✓ Added {len(leads_to_add)} leads to list {list_id}")
+        print(f"✓ Added {len(uniq_ids)} leads to list {list_id} in {time.time() - t0:.1f}s")
     else:
         print("⚠ No leads added")
-    
+
     print(f"\nNext: enrich this list with:")
-    print(f"  ./lead_lists.py enrich {list_id} --estimate")
+    print(f"  ./scripts/enrich_list.py {list_id} --estimate")
 
 
 # ============================================================================

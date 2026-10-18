@@ -609,74 +609,138 @@ def search_page(camp: dict, band: tuple[int, int], cursor: str | None, limit: in
 def upsert_pipeline(rows: list[dict]) -> None:
     if not rows:
         return
-    # chunk inserts
-    for i in range(0, len(rows), 50):
-        chunk = rows[i : i + 50]
+    # chunk inserts (bulk — not 1 call/lead)
+    for i in range(0, len(rows), 100):
+        chunk = rows[i : i + 100]
         sb_request("POST", "/rest/v1/pipeline_leads", chunk)
-        time.sleep(0.05)
+
+
+def _batch_lookup_emails_lead_db(emails: list[str]) -> set[str]:
+    """Return set of emails already in Lead Database."""
+    have: set[str] = set()
+    if not emails:
+        return have
+    for i in range(0, len(emails), 80):
+        batch = emails[i : i + 80]
+        try:
+            rows = sb_request(
+                "GET",
+                "/rest/v1/Lead%20Database",
+                params={
+                    "select": "Email",
+                    "or": f'({",".join(f"Email.eq.{em}" for em in batch)})',
+                    "limit": str(len(batch) * 2),
+                },
+            )
+            for r in rows or []:
+                em = (r.get("Email") or "").strip().lower()
+                if em:
+                    have.add(em)
+        except Exception as e:
+            print(f"lead_db_batch_lookup_err: {e}", flush=True)
+    return have
+
+
+def upsert_lead_db_batch(rows: list[dict]) -> None:
+    """Bulk insert new Lead Database rows (skip emails already present)."""
+    payloads = []
+    emails = []
+    for row in rows:
+        email = (row.get("email") or "").strip()
+        if not email:
+            continue
+        emails.append(email.lower())
+        payloads.append(
+            {
+                "First Name": row.get("first_name"),
+                "Last Name": row.get("last_name"),
+                "Email": email,
+                "Linkedin": row.get("linkedin"),
+                "Company Name": row.get("company_name"),
+                "Website": row.get("website") or row.get("company_domain"),
+            }
+        )
+    if not payloads:
+        return
+    existing = _batch_lookup_emails_lead_db(emails)
+    to_insert = [
+        p
+        for p in payloads
+        if (p.get("Email") or "").strip().lower() not in existing
+    ]
+    for i in range(0, len(to_insert), 100):
+        chunk = to_insert[i : i + 100]
+        try:
+            sb_request("POST", "/rest/v1/Lead%20Database", chunk)
+        except Exception as e:
+            print(f"lead_db_batch_insert_err: {e}", flush=True)
+    print(
+        f"  Lead Database bulk: {len(to_insert)} inserted, "
+        f"{len(payloads) - len(to_insert)} already present",
+        flush=True,
+    )
 
 
 def upsert_lead_db(row: dict) -> None:
-    email = row.get("email") or ""
-    if not email:
-        return
-    payload = {
-        "First Name": row.get("first_name"),
-        "Last Name": row.get("last_name"),
-        "Email": email,
-        "Linkedin": row.get("linkedin"),
-        "Company Name": row.get("company_name"),
-        "Website": row.get("website") or row.get("company_domain"),
-    }
-    try:
-        existing = sb_request(
-            "GET",
-            "/rest/v1/Lead%20Database",
-            params={"Email": f"eq.{email}", "select": "id", "limit": "1"},
+    """Legacy single-row helper; prefer upsert_lead_db_batch."""
+    upsert_lead_db_batch([row])
+
+
+def upsert_email_cache_batch(rows: list[dict]) -> None:
+    """Bulk POST email_cache; conflicts ignored via merge-duplicates when available."""
+    now = datetime.now(timezone.utc).isoformat()
+    payloads = []
+    seen: set[str] = set()
+    for row in rows:
+        email = (row.get("email") or "").strip()
+        if not email or email.lower() in seen:
+            continue
+        seen.add(email.lower())
+        payloads.append(
+            {
+                "email": email,
+                "first_name": row.get("first_name"),
+                "last_name": row.get("last_name"),
+                "linkedin": row.get("linkedin"),
+                "company_name": row.get("company_name"),
+                "company_domain": row.get("company_domain"),
+                "source": row.get("email_source") or "gws_list_builder",
+                "mv_status": row.get("mv_status"),
+                "verified_at": now,
+            }
         )
-        if existing:
-            return
-        sb_request("POST", "/rest/v1/Lead%20Database", payload)
-    except Exception as e:
-        print(f"lead_db_upsert_err {email}: {e}", flush=True)
+    for i in range(0, len(payloads), 100):
+        chunk = payloads[i : i + 100]
+        try:
+            # Prefer upsert semantics if unique(email) exists
+            url = f"{SUPABASE_URL}/rest/v1/email_cache"
+            data = json.dumps(chunk).encode()
+            req = urllib.request.Request(
+                url,
+                data=data,
+                method="POST",
+                headers={
+                    "apikey": supabase_key(),
+                    "Authorization": f"Bearer {supabase_key()}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates,return=minimal",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                resp.read()
+        except Exception as e:
+            # Fall back to plain insert (skip dupes individually is fine for cache)
+            print(f"email_cache_batch_err: {e}", flush=True)
+            for payload in chunk:
+                try:
+                    sb_request("POST", "/rest/v1/email_cache", payload)
+                except Exception:
+                    pass
 
 
 def upsert_email_cache(row: dict) -> None:
-    email = row.get("email") or ""
-    if not email:
-        return
-    payload = {
-        "email": email,
-        "first_name": row.get("first_name"),
-        "last_name": row.get("last_name"),
-        "linkedin": row.get("linkedin"),
-        "company_name": row.get("company_name"),
-        "company_domain": row.get("company_domain"),
-        "source": row.get("email_source") or "gws_list_builder",
-        "mv_status": row.get("mv_status"),
-        "verified_at": datetime.now(timezone.utc).isoformat(),
-    }
-    try:
-        sb_request(
-            "POST",
-            "/rest/v1/email_cache",
-            payload,
-        )
-    except Exception:
-        # unique conflict — patch
-        try:
-            sb_request(
-                "PATCH",
-                "/rest/v1/email_cache",
-                {
-                    "mv_status": row.get("mv_status"),
-                    "verified_at": payload["verified_at"],
-                    "updated_at": payload["verified_at"],
-                },
-                params={"email": f"eq.{email}"},
-            )
-        except Exception as e:
-            print(f"email_cache_err {email}: {e}", flush=True)
+    """Legacy single-row helper; prefer upsert_email_cache_batch."""
+    upsert_email_cache_batch([row])
 
 
 def write_sheet_csv(path: Path, rows: list[dict]) -> None:
@@ -893,10 +957,6 @@ def run_build(mode: str, confirm_spend: float, campaign_filter: list[str] | None
                         cstat["spent_usd"] + cost_here / 1_000_000, 6
                     )
 
-                    if email:
-                        upsert_lead_db(row)
-                        upsert_email_cache(row)
-
                     if cstat["found_total"] % 10 == 0:
                         print(
                             f"  {camp['id']} searched={cstat['searched']} ready={cstat['ready']} "
@@ -913,13 +973,17 @@ def run_build(mode: str, confirm_spend: float, campaign_filter: list[str] | None
             if spent_micro >= cap_micro:
                 break
 
-        # upload campaign chunk
+        # Bulk write campaign chunk (Lead DB + email_cache + pipeline) — not 4–5 calls/lead
+        camp_rows = [r for r in all_rows if r["campaign_id"] == camp["id"]]
+        email_rows = [r for r in camp_rows if r.get("email")]
+        if email_rows:
+            upsert_lead_db_batch(email_rows)
+            upsert_email_cache_batch(email_rows)
         upsert_pipeline(
             [
                 {k: v for k, v in r.items() if k != "raw"}
                 | {"raw": r.get("raw")}
-                for r in all_rows
-                if r["campaign_id"] == camp["id"]
+                for r in camp_rows
             ]
         )
         cov = (

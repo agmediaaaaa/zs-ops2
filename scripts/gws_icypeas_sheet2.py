@@ -638,10 +638,7 @@ def try_supabase_email_reuse(
     return None
 
 
-def upsert_pipeline_lead(row: dict, source_run: str = "gws_icypeas_sheet2") -> dict | None:
-    """Insert or update pipeline_leads for every found email (thread-safe)."""
-    if not supabase_key():
-        return None
+def _pipeline_payload(row: dict, source_run: str = "gws_icypeas_sheet2") -> dict[str, Any] | None:
     email = (row.get("email") or "").strip()
     if not email or email.lower() in ("n/a", "none", "null"):
         return None
@@ -681,20 +678,65 @@ def upsert_pipeline_lead(row: dict, source_run: str = "gws_icypeas_sheet2") -> d
             "supabase_age_days": row.get("supabase_age_days"),
         },
     }
-    # Drop None values except booleans
-    body = {k: v for k, v in payload.items() if v is not None or isinstance(v, bool)}
+    return {k: v for k, v in payload.items() if v is not None or isinstance(v, bool)}
 
-    existing = None
-    with _sb_lock:
-        existing = _sb_by_email.get(email.lower())
-        if not existing and li:
-            existing = _sb_by_li.get(normalize_linkedin(li))
 
-    try:
+def upsert_pipeline_leads_batch(
+    rows: list[dict], source_run: str = "gws_icypeas_sheet2"
+) -> int:
+    """Bulk insert new pipeline_leads; parallel PATCH existing. Returns saved count."""
+    if not supabase_key() or not rows:
+        return 0
+
+    inserts: list[dict] = []
+    updates: list[tuple[Any, dict]] = []  # (id, body)
+    for row in rows:
+        body = _pipeline_payload(row, source_run=source_run)
+        if not body:
+            continue
+        email = (body.get("email") or "").lower()
+        li = body.get("linkedin") or ""
+        existing = None
+        with _sb_lock:
+            existing = _sb_by_email.get(email)
+            if not existing and li:
+                existing = _sb_by_li.get(normalize_linkedin(li))
         if existing and existing.get("id"):
+            updates.append((existing["id"], body))
+        else:
+            inserts.append(body)
+
+    saved = 0
+    # Bulk POST inserts in chunks
+    for i in range(0, len(inserts), 100):
+        chunk = inserts[i : i + 100]
+        try:
+            url = SUPABASE_URL.rstrip("/") + "/rest/v1/pipeline_leads"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(chunk).encode(),
+                headers=_sb_headers(),
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode() or "[]")
+            if isinstance(data, list):
+                with _sb_lock:
+                    for saved_row in data:
+                        _sb_index_row(saved_row)
+                saved += len(data)
+            else:
+                saved += len(chunk)
+        except Exception as e:
+            print(f"supabase_bulk_insert_err: {e}", flush=True)
+
+    # Parallel PATCH updates (still one id each, but concurrent)
+    def _patch_one(item: tuple[Any, dict]) -> bool:
+        eid, body = item
+        try:
             url = (
                 SUPABASE_URL.rstrip("/")
-                + f"/rest/v1/pipeline_leads?id=eq.{existing['id']}"
+                + f"/rest/v1/pipeline_leads?id=eq.{eid}"
             )
             req = urllib.request.Request(
                 url,
@@ -702,26 +744,30 @@ def upsert_pipeline_lead(row: dict, source_run: str = "gws_icypeas_sheet2") -> d
                 headers=_sb_headers(),
                 method="PATCH",
             )
-        else:
-            url = SUPABASE_URL.rstrip("/") + "/rest/v1/pipeline_leads"
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(body).encode(),
-                headers=_sb_headers(),
-                method="POST",
-            )
-        with urllib.request.urlopen(req, timeout=45) as resp:
-            data = json.loads(resp.read().decode() or "[]")
-        saved = data[0] if isinstance(data, list) and data else (
-            data if isinstance(data, dict) else None
-        )
-        if saved:
-            with _sb_lock:
-                _sb_index_row(saved)
-        return saved
-    except Exception as e:
-        print(f"supabase_upsert_err {email}: {e}", flush=True)
-        return None
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                data = json.loads(resp.read().decode() or "[]")
+            saved_row = data[0] if isinstance(data, list) and data else None
+            if saved_row:
+                with _sb_lock:
+                    _sb_index_row(saved_row)
+            return True
+        except Exception as e:
+            print(f"supabase_patch_err {eid}: {e}", flush=True)
+            return False
+
+    if updates:
+        with ThreadPoolExecutor(max_workers=min(20, len(updates))) as pool:
+            for ok in pool.map(_patch_one, updates):
+                if ok:
+                    saved += 1
+
+    return saved
+
+
+def upsert_pipeline_lead(row: dict, source_run: str = "gws_icypeas_sheet2") -> dict | None:
+    """Single-row helper; prefer upsert_pipeline_leads_batch for volume."""
+    n = upsert_pipeline_leads_batch([row], source_run=source_run)
+    return {"ok": True} if n else None
 
 
 def verify_mv(email: str) -> tuple[str, int]:
@@ -1327,9 +1373,9 @@ def run(
             )
             resolved = process_candidates_parallel(candidates, excl_emails, workers)
 
-            # Apply results serially for domain/email uniqueness
+            # Apply results serially for domain/email uniqueness; bulk Supabase write
             page_ready = 0
-            sb_upserted = 0
+            page_rows: list[dict] = []
             for lead, res in resolved:
                 if res.get("stopped"):
                     stop = True
@@ -1346,14 +1392,11 @@ def run(
                     "supabase_age_days": res.get("supabase_age_days"),
                 }
                 all_found.append(row)
+                page_rows.append(row)
                 try:
                     st["spent_usd"] += float(res.get("spent_note") or 0)
                 except ValueError:
                     pass
-                # Every found email → Supabase (with size / description / location)
-                if row.get("email"):
-                    if upsert_pipeline_lead(row):
-                        sb_upserted += 1
                 if not res.get("plusvibe_ready"):
                     continue
                 d = lead["domain"]
@@ -1376,9 +1419,12 @@ def run(
                     f"rate={new_ready_this_run/max(time.time()-t0,1)*60:.1f}/min",
                     flush=True,
                 )
-            if sb_upserted:
+            email_page = [r for r in page_rows if r.get("email")]
+            if email_page:
+                sb_upserted = upsert_pipeline_leads_batch(email_page)
                 print(
-                    f"  SUPABASE upserted={sb_upserted} page={camp['id']}",
+                    f"  SUPABASE bulk upserted={sb_upserted}/{len(email_page)} "
+                    f"page={camp['id']}",
                     flush=True,
                 )
 
