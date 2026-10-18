@@ -522,6 +522,165 @@ def verify_mv(email: str) -> tuple[str, int]:
     return str(status).lower().strip(), int(meta.get("cost_micro") or 0)
 
 
+def _extract_company_about(payload: Any) -> tuple[str, str, str]:
+    """Return (description, company_name, company_linkedin) from enrich payloads."""
+    desc = name = li = ""
+    if not isinstance(payload, dict):
+        return desc, name, li
+    company = payload.get("company") if isinstance(payload.get("company"), dict) else None
+    out = payload.get("output") if isinstance(payload.get("output"), dict) else None
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else None
+    raw = payload.get("raw") if isinstance(payload.get("raw"), dict) else None
+    src = company or out or result or payload
+    if not isinstance(src, dict):
+        return desc, name, li
+    desc = (
+        src.get("about")
+        or src.get("description")
+        or src.get("tagline")
+        or src.get("company_description")
+        or ""
+    )
+    if isinstance(desc, dict):
+        desc = desc.get("text") or desc.get("description") or ""
+    # thecompaniesapi nests copy under raw.descriptions
+    if not desc and isinstance(raw, dict):
+        descriptions = raw.get("descriptions") or {}
+        if isinstance(descriptions, dict):
+            desc = descriptions.get("website") or descriptions.get("tagline") or ""
+        about = raw.get("about") if isinstance(raw.get("about"), dict) else {}
+        if not name and about.get("name"):
+            name = about["name"]
+    name = name or (src.get("name") or src.get("company_name") or "").strip()
+    li = (
+        src.get("linkedin_url")
+        or src.get("company_linkedin_url")
+        or src.get("linkedin")
+        or ""
+    ).strip()
+    return str(desc or "").strip(), name, li
+
+
+def enrich_company_profile(
+    domain: str,
+    company_linkedin: str = "",
+    company_name: str = "",
+) -> tuple[dict[str, str], int, str]:
+    """Blitz (preferred) then Icypeas for company description. Required for campaign-ready.
+
+    Returns (fields, cost_micro, served_by). fields may include company_description,
+    company_name, company_linkedin.
+    """
+    spent = 0
+    fields: dict[str, str] = {}
+    li = (company_linkedin or "").strip()
+    served = ""
+
+    # 1) Blitz: domain → LinkedIn (if needed)
+    if not li and domain:
+        data, meta = treg(
+            "POST",
+            "/call/blitzapi.companies.domain-to-linkedin",
+            {"domain": domain},
+        )
+        spent += int(meta.get("cost_micro") or 0)
+        if isinstance(data, dict) and data.get("found"):
+            li = (data.get("company_linkedin_url") or "").strip()
+            if data.get("company_name") and not company_name:
+                fields["company_name"] = data["company_name"]
+        served = "blitzapi.companies.domain-to-linkedin"
+
+    # 2) Blitz company enrich (about)
+    if li:
+        data, meta = treg(
+            "POST",
+            "/call/blitzapi.companies.enrich",
+            {"company_linkedin_url": li},
+        )
+        spent += int(meta.get("cost_micro") or 0)
+        served = "blitzapi.companies.enrich"
+        desc, name, li2 = _extract_company_about(data)
+        if li2:
+            li = li2
+        if name:
+            fields["company_name"] = name
+        if desc:
+            fields["company_description"] = desc
+            fields["company_linkedin"] = li
+            return fields, spent, served
+
+    # 3) thecompaniesapi by domain (often has website blurb when Blitz about is empty)
+    if domain:
+        data, meta = treg(
+            "POST",
+            "/call/treg.companies.enrich",
+            {k: v for k, v in {"domain": domain, "name": company_name or ""}.items() if v},
+            headers={
+                "X-Treg-Route-Prefer": "thecompaniesapi,hunter,icypeas",
+                "X-Treg-Route-Exclude": "dropleads,blitzapi",
+                "X-Treg-Route-Max-Cost": "0.02",
+                "X-Treg-Route-Waterfall": "1",
+            },
+        )
+        spent += int(meta.get("cost_micro") or 0)
+        served = meta.get("served_by") or "treg.companies.enrich"
+        desc, name, li2 = _extract_company_about(data if isinstance(data, dict) else {})
+        if li2:
+            li = li or li2
+        if name:
+            fields["company_name"] = name
+        if desc:
+            fields["company_description"] = desc
+            if li:
+                fields["company_linkedin"] = li
+            return fields, spent, served
+
+    # 4) Icypeas fallback: resolve URL then enrich (returns description)
+    lookup = domain or company_name
+    if lookup:
+        data, meta = treg(
+            "POST",
+            "/call/icypeas.companies.profile.url",
+            {"companyOrDomain": lookup},
+        )
+        spent += int(meta.get("cost_micro") or 0)
+        icy_url = ""
+        if isinstance(data, dict):
+            icy_url = (data.get("result") or "").strip()
+            if data.get("status") == "FOUND" and icy_url:
+                li = li or icy_url
+        if icy_url:
+            data2, meta2 = treg(
+                "GET",
+                "/call/icypeas.companies.enrich",
+                query={"url": icy_url},
+            )
+            spent += int(meta2.get("cost_micro") or 0)
+            served = "icypeas.companies.enrich"
+            src = data2
+            if isinstance(data2, dict):
+                src = data2.get("result") or data2.get("output") or data2
+            desc, name, li2 = _extract_company_about(src if isinstance(src, dict) else {})
+            if not desc and isinstance(src, dict):
+                desc = (
+                    src.get("description")
+                    or src.get("about")
+                    or (src.get("company") or {}).get("description")
+                    or ""
+                )
+                name = name or (src.get("name") or "")
+            if name:
+                fields["company_name"] = name
+            if desc:
+                fields["company_description"] = str(desc).strip()
+                fields["company_linkedin"] = li or icy_url
+                return fields, spent, served
+
+    if li:
+        fields["company_linkedin"] = li
+    return fields, spent, served or "company_enrich_miss"
+
+
 def upsert_lead(row: dict) -> int:
     email = (row.get("email") or "").strip().lower()
     linkedin = row.get("linkedin") or ""
@@ -551,6 +710,7 @@ def upsert_lead(row: dict) -> int:
         "Company Name": row.get("company_name"),
         "Website": row.get("website"),
         "company_size": row.get("company_size"),
+        "company_description": row.get("company_description"),
         "location": row.get("location"),
         "email_source": row.get("email_source"),
         "email_status": row.get("email_status"),
@@ -703,6 +863,8 @@ def run_build(mode: str, confirm_spend: float, ready_target: int) -> dict:
         "ready": 0,
         "failed_find": 0,
         "failed_verify": 0,
+        "failed_company_desc": 0,
+        "company_enrich_hits": 0,
         "emails_by_source": {},
         "cost_by_provider": {},
     }
@@ -796,21 +958,52 @@ def run_build(mode: str, confirm_spend: float, ready_target: int) -> dict:
             stats["failed_verify"] += 1
             continue
 
+        # Company description required for campaigns (Blitz → Icypeas)
+        if spent_micro + 2000 > cap_micro:
+            break
+        try:
+            cfields, ccost, cserved = enrich_company_profile(
+                domain,
+                company_linkedin="",
+                company_name=(co.get("name") or ""),
+            )
+        except Exception as e:
+            print(f"company_enrich_err @{domain}: {e}", flush=True)
+            stats["failed_company_desc"] += 1
+            continue
+        spent_micro += ccost
+        stats["cost_by_provider"][cserved] = (
+            stats["cost_by_provider"].get(cserved, 0) + ccost / 1e6
+        )
+        company_description = (cfields.get("company_description") or "").strip()
+        if not company_description:
+            stats["failed_company_desc"] += 1
+            print(f"skip_no_desc @{domain} spent=${spent_micro/1e6:.4f}", flush=True)
+            continue
+        stats["company_enrich_hits"] += 1
+
         loc = lead.get("location") or {}
         location = ", ".join(
             x for x in [loc.get("city"), loc.get("state"), loc.get("country")] if x
         )
         website = co.get("website") or (f"https://{domain}" if domain else "")
+        company_name = (
+            cfields.get("company_name")
+            or co.get("name")
+            or domain
+        )
         row = {
             "first_name": first,
             "last_name": last,
             "email": email,
             "linkedin": linkedin if linkedin.startswith("http") else (f"https://{linkedin}" if linkedin else ""),
             "title": lead.get("jobTitle") or "",
-            "company_name": co.get("name") or domain,
+            "company_name": company_name,
             "website": website,
             "company_size": str(co.get("employeeCount") or ""),
             "company_industry": co.get("industry") or "",
+            "company_description": company_description,
+            "company_linkedin": cfields.get("company_linkedin") or "",
             "location": location,
             "email_source": email_source,
             "email_status": mv_status,
@@ -830,7 +1023,7 @@ def run_build(mode: str, confirm_spend: float, ready_target: int) -> dict:
         )
         print(
             f"ready={stats['ready']}/{ready_target} {first} {last} <{email}> "
-            f"@{domain} mv={mv_status} spent=${spent_micro/1e6:.4f}",
+            f"@{domain} mv={mv_status} desc=yes spent=${spent_micro/1e6:.4f}",
             flush=True,
         )
 
@@ -850,6 +1043,8 @@ def run_build(mode: str, confirm_spend: float, ready_target: int) -> dict:
             "leadsforge.people.search",
             "treg.people.email.find (exclude aiark, max $0.006)",
             "millionverifier.people.email.verify",
+            "blitzapi.companies.domain-to-linkedin + blitzapi.companies.enrich (about)",
+            "icypeas.companies.enrich fallback for description",
             "plusvibe workspace suppress",
             "supabase Lead Database + lead_lists",
         ],
@@ -876,12 +1071,146 @@ def run_build(mode: str, confirm_spend: float, ready_target: int) -> dict:
     return report
 
 
+def backfill_company_descriptions(list_id: str, confirm_spend: float) -> dict:
+    """Fill company_description (+ name when missing) for an existing list."""
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    cap_micro = int(round(confirm_spend * 1_000_000))
+    spent_micro = 0
+    members = (
+        sb_request(
+            "GET",
+            "lead_list_members",
+            query={
+                "list_id": f"eq.{list_id}",
+                "select": "lead_id",
+                "limit": "500",
+            },
+        )
+        or []
+    )
+    lead_ids = [int(m["lead_id"]) for m in members]
+    print(f"backfill list_id={list_id} members={len(lead_ids)} cap=${confirm_spend}", flush=True)
+    updated = 0
+    missed = 0
+    already = 0
+    domain_cache: dict[str, dict[str, str]] = {}
+
+    for lid in lead_ids:
+        if spent_micro + 2000 > cap_micro:
+            print(f"stop_near_cap spent=${spent_micro/1e6:.4f}", flush=True)
+            break
+        rows = (
+            sb_request(
+                "GET",
+                "Lead Database",
+                query={
+                    "id": f"eq.{lid}",
+                    "select": 'id,"Company Name","Website",company_description,company_size,location',
+                    "limit": "1",
+                },
+            )
+            or []
+        )
+        if not rows:
+            continue
+        row = rows[0]
+        if (row.get("company_description") or "").strip():
+            already += 1
+            continue
+        website = row.get("Website") or ""
+        domain = domain_of({"website": website, "domain": ""})
+        if not domain and website:
+            domain = domain_of({"domain": website})
+        if not domain:
+            missed += 1
+            print(f"miss_no_domain lead_id={lid}", flush=True)
+            continue
+        if domain in domain_cache:
+            fields = domain_cache[domain]
+            ccost = 0
+            cserved = "cache"
+        else:
+            try:
+                fields, ccost, cserved = enrich_company_profile(
+                    domain,
+                    company_name=(row.get("Company Name") or ""),
+                )
+            except Exception as e:
+                print(f"enrich_err lead_id={lid} @{domain}: {e}", flush=True)
+                missed += 1
+                continue
+            spent_micro += ccost
+            domain_cache[domain] = fields
+        desc = (fields.get("company_description") or "").strip()
+        if not desc:
+            missed += 1
+            print(f"miss_no_desc lead_id={lid} @{domain} via={cserved}", flush=True)
+            continue
+        patch = {
+            "company_description": desc,
+            "enrichment_updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if fields.get("company_name"):
+            patch["Company Name"] = fields["company_name"]
+        sb_request(
+            "PATCH",
+            "Lead Database",
+            patch,
+            query={"id": f"eq.{lid}"},
+            prefer="return=minimal",
+        )
+        updated += 1
+        print(
+            f"updated={updated} lead_id={lid} @{domain} via={cserved} "
+            f"spent=${spent_micro/1e6:.4f} desc_len={len(desc)}",
+            flush=True,
+        )
+
+    report = {
+        "mode": "backfill_company_description",
+        "list_id": list_id,
+        "updated": updated,
+        "already_had_desc": already,
+        "missed": missed,
+        "actual_cost_usd": round(spent_micro / 1e6, 6),
+        "confirm_spend_usd": confirm_spend,
+    }
+    path = OUT_DIR / f"atc-np-pa-backfill-{list_id[:8]}.json"
+    path.write_text(json.dumps(report, indent=2))
+    print(json.dumps(report, indent=2))
+    # bump list metadata
+    try:
+        existing = sb_request(
+            "GET", "lead_lists", query={"list_id": f"eq.{list_id}", "select": "actual_cost_usd,run_report"}
+        ) or []
+        if existing:
+            prev_cost = float(existing[0].get("actual_cost_usd") or 0)
+            prev_report = existing[0].get("run_report") or {}
+            if isinstance(prev_report, str):
+                prev_report = json.loads(prev_report)
+            prev_report["company_desc_backfill"] = report
+            sb_request(
+                "PATCH",
+                "lead_lists",
+                {
+                    "actual_cost_usd": round(prev_cost + spent_micro / 1e6, 6),
+                    "run_report": prev_report,
+                },
+                query={"list_id": f"eq.{list_id}"},
+                prefer="return=minimal",
+            )
+    except Exception as e:
+        print(f"list_meta_update_err: {e}", flush=True)
+    return report
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--scope-only", action="store_true")
     g.add_argument("--pilot", action="store_true")
     g.add_argument("--full", action="store_true")
+    g.add_argument("--backfill-list-id", type=str, default=None)
     ap.add_argument("--confirm-spend", type=float, default=None)
     ap.add_argument("--ready-target", type=int, default=None)
     args = ap.parse_args()
@@ -890,6 +1219,12 @@ def main() -> None:
         tam = free_count()
         print(f"TAM_people={tam:,}")
         print("No paid calls. Re-run with --pilot --confirm-spend N")
+        return
+
+    if args.backfill_list_id:
+        if args.confirm_spend is None:
+            raise SystemExit("--confirm-spend USD required for backfill")
+        backfill_company_descriptions(args.backfill_list_id, args.confirm_spend)
         return
 
     if args.confirm_spend is None:
