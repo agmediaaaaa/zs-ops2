@@ -215,18 +215,20 @@ WAIT for my answers. Then propose the Icypeas query (include + exclude) for appr
 
 ### Gate 1 — Free TAM WITH excludes (never without)
 
-1. Load my exclude sources (PlusVibe / Supabase / lists I named).
-2. Build the FULL query including title/domain/keyword excludes.
+1. Load my exclude sources (PlusVibe / Supabase / lists I named): domains first.
+2. Build the FULL query with **in-query** title + keyword + `currentCompanyWebsite.exclude`
+   (and name/urn/id if useful). Do **not** put person LinkedIn URLs in the Icypeas query.
 3. Run `icypeas.people.search.count` with that FULL query ($0).
 4. Present a TAM map like:
 
-   | Segment | TAM raw (no domain exclude) | TAM after ALL excludes | Notes |
-   |---------|-----------------------------|------------------------|-------|
-   | V1 …   | …                           | …                      | …     |
-   | TOTAL  | …                           | …                      | …     |
+   | Segment | TAM raw (no domain exclude) | TAM after in-query excludes (titles+keywords+domains) | Notes |
+   |---------|-----------------------------|--------------------------------------------------------|-------|
+   | V1 …   | …                           | …                                                      | …     |
+   | TOTAL  | …                           | …                                                      | …     |
 
-5. The number we plan against is **TAM after ALL excludes**.
-6. If TAM collapses oddly after excludes, tell me — do NOT drop excludes to inflate volume.
+5. The number we plan against is **TAM after in-query excludes**.
+6. Note separately: person LinkedIn skips happen later (pre-Blitz) and are not in this TAM.
+7. If TAM collapses oddly after excludes, tell me — do NOT drop excludes to inflate volume.
 
 ### Gate 2 — Catalog quote → ASK ME for the cost cap
 

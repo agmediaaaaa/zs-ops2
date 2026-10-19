@@ -15,8 +15,9 @@ Before Notion, Google Drive, Slack, Airtable, memory search, or other external M
 1. `.cursor/rules/lead-scrape.mdc` (this file)
 2. `.cursor/skills/lead-scrape-gates/SKILL.md`
 3. `docs/waterfall-cost-matrix.md`
-4. `08-treg-lead-scrape/MASTER-PROMPT.md`
-5. Matching runners under `scripts/`
+4. `docs/icypeas-exclude-capabilities.md`
+5. `08-treg-lead-scrape/MASTER-PROMPT.md`
+6. Matching runners under `scripts/`
 
 Do **not** start by searching Notion / Drive / Slack / Airtable for “how we scrape.” Those are distractions.
 
