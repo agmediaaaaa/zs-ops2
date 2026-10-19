@@ -27,6 +27,10 @@ Do **not** start by searching Notion / Drive / Slack / Airtable for “how we sc
 
 Paste-ready user prompt: `08-treg-lead-scrape/MASTER-PROMPT.md`
 
+**Prefer terminal wizard for paid scrapes:** `python3 scripts/scrape_wizard.py`
+(`08-treg-lead-scrape/HOW-TO-RUN-SAFE.md`). Do not freestyle paid `/call/` loops in chat
+when the wizard/runner can do the job.
+
 Cost matrix: `docs/waterfall-cost-matrix.md`
 
 ## Hard rules
