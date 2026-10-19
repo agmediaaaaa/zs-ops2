@@ -35,7 +35,8 @@ from urllib.parse import urlparse
 # Absolute max Treg spend for any paid MARS run unless user explicitly overrides
 # with a LOWER --confirm-spend. Never allow confirm-spend above this without
 # changing HARD_SPEND_CAP_USD after user approval.
-HARD_SPEND_CAP_USD = 3.50
+HARD_SPEND_CAP_USD = 2.50  # session auth; remaining of this budget was ~$0.08 after cap25 runs
+
 
 TOKEN = (
     json.loads(Path.home().joinpath(".treg/config.json").read_text()).get("token")
@@ -741,7 +742,9 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
         pages = 0
         max_pages = 40
 
-        cand_goal = max(want * 3, want + 15)
+        # Keep search spend tight: don't page the entire TAM when want is inflated.
+        cand_goal = min(max(want * 2, 20), 120)
+        max_pages = min(max_pages, 12)  # <= 600 search rows / stream
         q = with_website_excludes(s["query"], site_excl)
         while pages < max_pages and len(candidates) < cand_goal:
             body: dict = {"query": q, "pagination": {"size": 50}}
