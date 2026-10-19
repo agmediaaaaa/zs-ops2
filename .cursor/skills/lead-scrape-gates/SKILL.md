@@ -40,10 +40,16 @@ When the user asks for **N prospects** (e.g. “100 prospects”, `--pull 100`):
 **Pipeline stages (always, in order):**
 
 1. **Discover** — Icypeas people search until `pulled == N` (or TAM exhausted), with
-   **in-query** `currentJobTitle.include` + `.exclude`, `keyword.exclude`,
-   `currentCompanyWebsite.exclude`.
+   **in-query** excludes loaded first:
+   - `currentJobTitle.include` + `.exclude`
+   - `keyword.exclude`
+   - `currentCompanyWebsite.exclude` (existing domains — verified supported)
+   - optional `currentCompanyName` / Urn / Id exclude
+   - Person LinkedIn URLs **cannot** be excluded in Icypeas query (schema rejects `profileUrl`)
 2. **Cache** — Supabase LinkedIn/email/domain lookup on the whole batch (cost skip).
-3. **Pre-email skip** — drop known LinkedIn / email against PlusVibe + seed **before** Blitz.
+3. **Pre-email skip** — drop known **person LinkedIn** / email against PlusVibe + seed **before** Blitz
+   (this is the only LinkedIn-person suppress Icypeas allows — do it before paying Blitz,
+   but domains must already have been excluded in-query so you did not pay Icypeas for them).
 4. **Find** — concurrent email find on misses only: Blitz → QuickEnrich → Trykitt.
    - Prefer **Blitz only** when LinkedIn is present (Cheap Scrape path).
    - Exclude Icypeas from email routing (`X-Treg-Route-Exclude: aiark,icypeas`).

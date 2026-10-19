@@ -58,6 +58,7 @@ Before Notion, Google Drive, Slack, Airtable, memory search, or any other MCP:
    - `.cursor/rules/lead-scrape.mdc`
    - `.cursor/skills/lead-scrape-gates/SKILL.md`
    - `docs/waterfall-cost-matrix.md`
+   - `docs/icypeas-exclude-capabilities.md` (what Icypeas can/cannot exclude in-query)
    - `08-treg-lead-scrape/MASTER-PROMPT.md` (this playbook)
    - Existing runners under `scripts/` that match the campaign
      (e.g. `pilot_icypeas_blitz_four_verticals.py`, `mars_scrape_icypeas.py`,
@@ -117,11 +118,44 @@ X-Treg-Route-Exclude: aiark,icypeas
 - Do NOT change this pathway mid-scrape without asking me first
 
 ================================================================
-## 3. EXCLUSIONS — IN THE INITIAL ICYPEAS QUERY (NOT AFTER)
+## 3. EXCLUSIONS — VERIFY CAPABILITY, THEN EXCLUDE BEFORE SPEND
 ================================================================
 
-Icypeas bills per returned row. Post-filtering junk after search = paying for trash.
-Put excludes IN the query before any paid search AND before TAM counts.
+Icypeas bills **per returned row** (~$0.00038). Paying for a row and then dropping it
+in Python is waste. Anything Icypeas can exclude in-query MUST be in the query
+before free TAM counts AND before paid `people.search`.
+
+### Verified Icypeas query capabilities (live-checked via Treg)
+
+| Want to exclude | In Icypeas query? | How |
+|-----------------|-------------------|-----|
+| Job titles | YES | `currentJobTitle: {include, exclude}` |
+| Keywords | YES | `keyword: {include, exclude}` |
+| Company **domains / websites** | YES | `currentCompanyWebsite: {exclude: ["acme.com", …]}` |
+| Company names | YES | `currentCompanyName: {exclude: […]}` |
+| Company LinkedIn URN / ID | YES | `currentCompanyUrn` / `currentCompanyId` `{exclude}` |
+| Person **LinkedIn profile URLs** | NO | Schema rejects `profileUrl` / similar keys (`forbidden keys`) |
+
+**Domains → in-query. LinkedIn person URLs → cannot be in-query on Icypeas.**
+
+### Correct order (do not reverse)
+
+1. Load exclude seed (PlusVibe / Supabase / lists I name): domains, company names, LinkedIns, emails
+2. Put **every in-query-capable exclude** into the Icypeas query (esp. domains via
+   `currentCompanyWebsite.exclude`, titles, keywords)
+3. Free TAM count with that FULL query
+4. Paid `people.search` with the **same** FULL query
+5. On returned rows only: free skip of known person LinkedIns / emails **before Blitz**
+6. Blitz remaining LinkedIns only
+
+### BANNED pattern (Mars waste)
+
+```
+paid Icypeas search (no domain exclude)
+  → drop known domains / junk in Python
+  → Blitz survivors
+```
+That pays Icypeas for rows you already knew you did not want.
 
 ### Required in-query excludes
 
@@ -130,31 +164,37 @@ Put excludes IN the query before any paid search AND before TAM counts.
    - `currentJobTitle.exclude` = VP, Vice President, Assistant, Sales, Marketing, HR,
      Engineer, Intern, Student, Retired, Former, Consultant, Advisor, Board Member,
      plus any junk titles I specify
-   - Keep a free local `TITLE_REJECT_RE` as a safety net only
+   - Keep a free local `TITLE_REJECT_RE` as a safety net only (not the primary filter)
 
-2. **Domain / company website exclude**
+2. **Domain / company website exclude (REQUIRED when I have existing leads)**
    - `currentCompanyWebsite.exclude` = existing prospect / PlusVibe / client company domains
-   - Load from PlusVibe workspace + Supabase / whatever exclude sources I name
-   - Normalize to bare host (no https://, no www.)
+   - Normalize to bare host (no `https://`, no `www.`)
+   - Optional: also `currentCompanyName.exclude` for known company names
+   - Do this BEFORE paid search — not after
 
 3. **Keyword exclude**
    - `keyword.exclude` = staffing, recruiting, SaaS, software, consulting firm, etc.
      (whatever I specify for this campaign)
 
 4. **Headcount / geo / industry** as I specify
-   - Use flat dotted keys: `currentCompany.headcount` (nested currentCompany:{headcount} fails)
+   - Use flat dotted keys: `currentCompany.headcount` (nested `currentCompany:{headcount}` fails)
 
-### Pre-email skips (free, after search returns)
+### Person LinkedIn — post-search skip only (Icypeas cannot exclude these in-query)
 
-- Skip LinkedIn URLs already in PlusVibe / Supabase / exclude seed (before Blitz)
+Because `profileUrl` is a forbidden query key:
+
+- Skip known person LinkedIn URLs **after** search returns and **before** Blitz (free)
 - Skip known emails; skip freemail (gmail/yahoo/hotmail/outlook) after find
 - Never Blitz a LinkedIn you already own
+- Do NOT claim LinkedIn URL exclude works inside Icypeas — it does not
+- (Leadsforge has `excludeLinkedInURLs` / `excludeDomains`, but that is a **different path** —
+  only switch if I approve a course change)
 
 ### Suppress vs cost-skip
 
 - Supabase / Lead Database = cost skip (don’t pay to re-enrich)
 - PlusVibe = send suppress for ready/upload
-- Prefer exclude-before-search over suppress-after-spend
+- Prefer **in-query exclude** (domains/titles/keywords) over suppress-after-spend
 
 ================================================================
 ## 4. MANDATORY GATES (STOP AND ASK)
@@ -287,15 +327,17 @@ Banned:
 2. Wandering / side research instead of asking me who to target
 3. Inventing ICP, verticals, volume, or a cost cap without asking
 4. Showing TAM without applying my excludes (or treating raw TAM as the plan number)
-5. Paid Icypeas search without currentJobTitle.exclude + domain exclude in-query
-6. Blitz before LinkedIn/email suppress against existing leads
-7. Spending without my numeric --confirm-spend
-8. Changing scrape course mid-run (Leadsforge / QE / Trykitt / new filters) without asking
-9. Dropping excludes to “make TAM bigger”
-10. Burning pilot budget on wrong MillionVerifier call format
-11. Broadening filters after tiny yield instead of stopping to ask
-12. Row-by-row Supabase uploads
-13. Marking ready without company description when campaigns need it
+5. Paid Icypeas search **without** `currentJobTitle.exclude` + `currentCompanyWebsite.exclude` in-query when exclude lists exist
+6. Paying Icypeas first, then filtering domains/titles in Python, then Blitz (wrong order)
+7. Pretending person LinkedIn URLs can be excluded inside the Icypeas query (they cannot)
+8. Blitz before LinkedIn/email suppress against existing leads
+9. Spending without my numeric --confirm-spend
+10. Changing scrape course mid-run (Leadsforge / QE / Trykitt / new filters) without asking
+11. Dropping excludes to “make TAM bigger”
+12. Burning pilot budget on wrong MillionVerifier call format
+13. Broadening filters after tiny yield instead of stopping to ask
+14. Row-by-row Supabase uploads
+15. Marking ready without company description when campaigns need it
 
 Good reference economics (Cheap Scrape / ATC facility):
 - ~3–5 Icypeas rows per ready

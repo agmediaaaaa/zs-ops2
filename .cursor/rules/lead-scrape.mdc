@@ -37,8 +37,12 @@ Cost matrix: `docs/waterfall-cost-matrix.md`
    3. MV-verify found emails (concurrent) only after path is proven
    4. Bulk upload to Supabase (desc, loc, etc.)
    If you want Leadsforge / QuickEnrich / Trykitt / different filters: **stop and ask** — never switch course alone.
-3. **Exclusions in the initial Icypeas query:** `currentJobTitle.include` **and** `.exclude`, `keyword.exclude`, `currentCompanyWebsite.exclude` (existing domains). Skip known LinkedIn/email **before** Blitz. Never pay search rows then drop junk in Python as the primary filter. Never drop excludes to inflate TAM.
-4. **Scope first (free):** Run free counts before any paid call. Present TAM **after ALL excludes** (optionally show raw vs after-excludes). Plan against after-excludes only.
+3. **Exclusions before spend (verified Icypeas capabilities):**
+   - **In-query (must):** `currentJobTitle.include`+`.exclude`, `keyword.exclude`, `currentCompanyWebsite.exclude` (domains), optionally `currentCompanyName` / Urn / Id exclude.
+   - **Not in Icypeas query:** person LinkedIn `profileUrl` is rejected by schema — skip known LinkedIns **after** search, **before** Blitz (free).
+   - **Banned:** pay Icypeas → filter domains in Python → Blitz. Put domains in the query first.
+   - Never drop excludes to inflate TAM.
+4. **Scope first (free):** Run free counts with the FULL exclude query. Present TAM **after ALL in-query excludes**. Plan against that number.
 5. **Catalog quote:** Use `scripts/treg_pricing.py` (or `--estimate` / `--scope-only` on runners). Never invent flat averages like `$0.003/lead`.
 6. **Spend confirm — user sets the cap:** Stop and **ask** “What hard cost cap should I use? Reply with `--confirm-spend <usd>`.” You **never** invent or self-authorize a cap. “Just run it” / “scrape 2k” is not a cap and not full-volume approval.
 7. **Pilot before full:** Small pilot + quote-vs-actual report before multi-thousand runs. Re-confirm spend for full.
