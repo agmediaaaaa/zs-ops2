@@ -15,7 +15,7 @@ Gates:
 Example:
   python scripts/mars_scrape_icypeas.py --scope-only
   python scripts/mars_scrape_icypeas.py --pilot --confirm-spend 1.00
-  python scripts/mars_scrape_icypeas.py --full 2000 --confirm-spend 9.00 --upload-plusvibe
+  python scripts/mars_scrape_icypeas.py --full 2000 --confirm-spend 3.50 --upload-plusvibe
 """
 from __future__ import annotations
 
@@ -31,6 +31,11 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+
+# Absolute max Treg spend for any paid MARS run unless user explicitly overrides
+# with a LOWER --confirm-spend. Never allow confirm-spend above this without
+# changing HARD_SPEND_CAP_USD after user approval.
+HARD_SPEND_CAP_USD = 3.50
 
 TOKEN = (
     json.loads(Path.home().joinpath(".treg/config.json").read_text()).get("token")
@@ -181,7 +186,7 @@ FREEMAIL = {
 MV_VALID = {"ok", "catch_all", "valid", "smtp_valid", "catch_all_valid", "good"}
 
 
-def _streams() -> list[dict]:
+def _streams(broad: bool = False) -> list[dict]:
     """Four MARS segments × csuite(<200) / ops(200+)."""
     specs = [
         {
@@ -189,17 +194,36 @@ def _streams() -> list[dict]:
             "name": "Precision CNC / machine shops",
             "emp_cs": (10, 199),
             "emp_ops": (200, 500),
-            "keywords": [
-                "CNC machining",
-                "precision machining",
-                "Swiss turning",
-                "5-axis machining",
-                "machine shop",
-                "job shop",
-                "contract machining",
-                "screw machine products",
-                "wire EDM",
-            ],
+            "keywords": (
+                [
+                    "CNC",
+                    "CNC machining",
+                    "precision machining",
+                    "Swiss turning",
+                    "5-axis",
+                    "machine shop",
+                    "job shop",
+                    "contract machining",
+                    "machining",
+                    "screw machine",
+                    "wire EDM",
+                    "EDM",
+                    "CNC mill",
+                    "CNC turning",
+                ]
+                if broad
+                else [
+                    "CNC machining",
+                    "precision machining",
+                    "Swiss turning",
+                    "5-axis machining",
+                    "machine shop",
+                    "job shop",
+                    "contract machining",
+                    "screw machine products",
+                    "wire EDM",
+                ]
+            ),
             "exclude_extra": [],
             "accept_re": re.compile(
                 r"cnc|precision machin|swiss turn|5[\s-]?axis|grind|"
@@ -216,27 +240,52 @@ def _streams() -> list[dict]:
             "name": "Foundries / metal casting",
             "emp_cs": (10, 199),
             "emp_ops": (200, 500),
-            "keywords": [
-                "foundry",
-                "metal casting",
-                "investment casting",
-                "sand casting",
-                "die casting",
-                "permanent mold casting",
-                "lost wax casting",
-                "aluminum casting",
-                "iron casting",
-                "steel casting",
-                "bronze casting",
-            ],
+            "keywords": (
+                [
+                    "foundry",
+                    "metal casting",
+                    "investment casting",
+                    "sand casting",
+                    "die casting",
+                    "permanent mold",
+                    "lost wax",
+                    "aluminum casting",
+                    "iron casting",
+                    "steel casting",
+                    "bronze casting",
+                    "castings",
+                ]
+                if broad
+                else [
+                    "foundry",
+                    "metal casting",
+                    "investment casting",
+                    "sand casting",
+                    "die casting",
+                    "permanent mold casting",
+                    "lost wax casting",
+                    "aluminum casting",
+                    "iron casting",
+                    "steel casting",
+                    "bronze casting",
+                ]
+            ),
             "exclude_extra": ["scrap metal", "recycling", "foundry supply"],
+            # Require metal/manufacturing casting context (blocks talent/"digital foundry")
             "accept_re": re.compile(
-                r"foundry|foundries|casting|castings|investment cast|sand cast|die cast|"
-                r"permanent mold|lost wax|aluminum cast|iron cast|steel cast|bronze cast",
+                r"("
+                r"metal casting|iron casting|steel casting|aluminum casting|bronze casting|"
+                r"investment casting|sand casting|die casting|permanent mold|lost wax|"
+                r"gray iron|ductile iron|"
+                r"(foundry).{0,60}(metal|iron|steel|aluminum|cast|pour|melt|mold|alloy|manufactur)|"
+                r"(cast(?:ing|ings)?).{0,60}(foundry|metal|iron|steel|aluminum|manufactur|plant)"
+                r")",
                 re.I,
             ),
             "reject_re": re.compile(
-                r"scrap metal|recycl|foundry supply|staffing|recruit|software|saas",
+                r"scrap metal|recycl|foundry supply|staffing|recruit|software|saas|"
+                r"digital foundry|healthcare foundry|protein foundry|fierce foundry|"
+                r"foundry\.(la|io)|talent|casting partner|knock\.com",
                 re.I,
             ),
         },
@@ -245,15 +294,29 @@ def _streams() -> list[dict]:
             "name": "AS9100 aerospace / turbine",
             "emp_cs": (10, 199),
             "emp_ops": (200, 500),
-            "keywords": [
-                "AS9100",
-                "aerospace machining",
-                "aircraft parts",
-                "aircraft components",
-                "turbine components",
-                "jet engine components",
-                "NADCAP",
-            ],
+            "keywords": (
+                [
+                    "AS9100",
+                    "aerospace machining",
+                    "aerospace",
+                    "aircraft parts",
+                    "aircraft components",
+                    "turbine components",
+                    "jet engine",
+                    "NADCAP",
+                    "defense machining",
+                ]
+                if broad
+                else [
+                    "AS9100",
+                    "aerospace machining",
+                    "aircraft parts",
+                    "aircraft components",
+                    "turbine components",
+                    "jet engine components",
+                    "NADCAP",
+                ]
+            ),
             "exclude_extra": [],
             "accept_re": re.compile(
                 r"as.?9100|nadcap|"
@@ -265,7 +328,7 @@ def _streams() -> list[dict]:
             ),
             "reject_re": re.compile(
                 r"staffing|recruit|software|saas|consulting only|"
-                r"airline passenger|airport",
+                r"airline passenger|airport|airline spares",
                 re.I,
             ),
         },
@@ -274,15 +337,30 @@ def _streams() -> list[dict]:
             "name": "Sheet metal / fabrication",
             "emp_cs": (10, 199),
             "emp_ops": (200, 999),
-            "keywords": [
-                "sheet metal fabrication",
-                "precision sheet metal",
-                "metal fabrication",
-                "press brake",
-                "laser cutting",
-                "CNC punching",
-                "welding and fabrication",
-            ],
+            "keywords": (
+                [
+                    "sheet metal",
+                    "sheet metal fabrication",
+                    "precision sheet metal",
+                    "metal fabrication",
+                    "fabrication",
+                    "press brake",
+                    "laser cutting",
+                    "CNC punching",
+                    "welding fabrication",
+                    "plate fabrication",
+                ]
+                if broad
+                else [
+                    "sheet metal fabrication",
+                    "precision sheet metal",
+                    "metal fabrication",
+                    "press brake",
+                    "laser cutting",
+                    "CNC punching",
+                    "welding and fabrication",
+                ]
+            ),
             "exclude_extra": ["HVAC", "roofing", "ductwork", "steel service center"],
             "accept_re": re.compile(
                 r"sheet[\s-]?metal|precision sheet|metal fabricat|press brake|"
@@ -291,7 +369,7 @@ def _streams() -> list[dict]:
             ),
             "reject_re": re.compile(
                 r"\bhvac\b|roofing|ductwork|steel service|construction company|"
-                r"mining|staffing|recruit|software|saas",
+                r"mining|staffing|recruit|software|saas|fence|awning|enameling",
                 re.I,
             ),
         },
@@ -328,7 +406,7 @@ def _streams() -> list[dict]:
     return streams
 
 
-STREAMS = _streams()
+STREAMS = _streams(False)
 
 
 def call(
@@ -442,8 +520,10 @@ def extract_email(eout: dict) -> str | None:
     return None
 
 
-def scope_only() -> None:
-    print("=== FREE TAM (icypeas.people.search.count) — MARS ===")
+def scope_only(broad: bool = False) -> None:
+    global STREAMS
+    STREAMS = _streams(broad=broad)
+    print(f"=== FREE TAM (icypeas.people.search.count) — MARS [{'BROAD' if broad else 'precise'}] ===")
     total = 0
     for s in STREAMS:
         out, cost = call("icypeas.people.search.count", {"query": s["query"]})
@@ -534,44 +614,40 @@ def plusvibe_upload(rows: list[dict], batch_size: int = 50) -> dict:
     return {"added": added, "skipped": skipped, "errors": errors, "details": details}
 
 
-def run(ready_target: int, hard_cap: float, verify: bool, upload: bool) -> None:
+def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: bool = False) -> None:
+    global STREAMS
+    STREAMS = _streams(broad=broad)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     excl = load_excludes()
+    print(f"Mode: {'BROAD' if broad else 'precise'} | streams={len(STREAMS)}")
     print(
         f"Excludes: emails={len(excl['emails'])} linkedin={len(excl['linkedins'])} "
         f"domains={len(excl['domains'])}"
     )
     spend_micro = 0
     rows: list[dict] = []
+    # Person-level suppress only (email + LinkedIn). Domains are batch-deduped.
     seen_li: set[str] = set(excl["linkedins"])
     seen_email: set[str] = set(excl["emails"])
-    seen_domain: set[str] = set(excl["domains"])
+    seen_domain: set[str] = set()
     camps: list[dict] = []
     progress_path = OUT_DIR / "progress.json"
 
     # Seed prior pilot/volume CSVs so we don't re-pay for the same people
-    seed_dirs = [
-        Path("/workspace/artifacts/mars-scrape/pilot2"),
-        Path("/workspace/artifacts/mars-scrape/pilot3"),
-        Path("/workspace/artifacts/mars-scrape"),
-    ]
-    for d in seed_dirs:
-        for csv_path in d.glob("*ready.csv"):
-            try:
-                with open(csv_path, newline="") as f:
-                    for r in csv.DictReader(f):
-                        if r.get("person_linkedin"):
-                            seen_li.add(norm_linkedin(r["person_linkedin"]))
-                        if r.get("email"):
-                            seen_email.add(r["email"].strip().lower())
-                        dom = norm_domain(r.get("company_website") or "")
-                        if not dom and r.get("email") and "@" in r["email"]:
-                            dom = r["email"].split("@", 1)[1].lower()
-                        if dom and dom not in FREEMAIL:
-                            seen_domain.add(dom)
-            except Exception as e:
-                print(f"  seed skip {csv_path}: {e}")
-    print(f"After seed: seen_li={len(seen_li)} seen_email={len(seen_email)} seen_domain={len(seen_domain)}")
+    for csv_path in Path("/workspace/artifacts/mars-scrape").rglob("*ready.csv"):
+        try:
+            with open(csv_path, newline="") as f:
+                for r in csv.DictReader(f):
+                    if r.get("person_linkedin"):
+                        seen_li.add(norm_linkedin(r["person_linkedin"]))
+                    if r.get("email"):
+                        seen_email.add(r["email"].strip().lower())
+        except Exception as e:
+            print(f"  seed skip {csv_path}: {e}")
+    print(
+        f"After seed: seen_li={len(seen_li)} seen_email={len(seen_email)} "
+        f"(PV domain exclude OFF; batch domain dedupe ON)"
+    )
 
     def pay(endpoint, body=None, query=None, method=None, fallback_cost_micro: int = 0):
         nonlocal spend_micro
@@ -653,10 +729,10 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool) -> None:
                 if not INDUSTRIAL_HINT_RE.search(blob):
                     continue
                 li = norm_linkedin(L.get("profileUrl") or "")
-                if not li or li in seen_li or li in excl["linkedins"]:
+                if not li or li in seen_li:
                     continue
                 dom = norm_domain(L.get("lastCompanyWebsite") or "")
-                if dom and (dom in excl["domains"] or dom in seen_domain):
+                if dom and dom in seen_domain:
                     continue
                 candidates.append(L)
                 if len(candidates) >= cand_goal:
@@ -689,10 +765,10 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool) -> None:
             if domain in FREEMAIL:
                 freemail_skip += 1
                 continue
-            if email in excl["emails"] or email in seen_email:
+            if email in seen_email:
                 pv_skip += 1
                 continue
-            if domain in excl["domains"] or domain in seen_domain:
+            if domain in seen_domain:
                 pv_skip += 1
                 continue
 
@@ -850,9 +926,10 @@ def main() -> None:
     ap.add_argument("--confirm-spend", type=float, default=None)
     ap.add_argument("--upload-plusvibe", action="store_true")
     ap.add_argument("--skip-verify", action="store_true")
+    ap.add_argument("--broad", action="store_true", help="wider keywords for fill-up volume")
     args = ap.parse_args()
     if args.scope_only:
-        scope_only()
+        scope_only(broad=args.broad)
         return
     if args.pilot or args.full:
         if args.confirm_spend is None:
@@ -864,6 +941,7 @@ def main() -> None:
             hard_cap=args.confirm_spend,
             verify=not args.skip_verify,
             upload=args.upload_plusvibe,
+            broad=args.broad,
         )
         return
     ap.print_help()
