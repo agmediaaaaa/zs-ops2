@@ -409,6 +409,32 @@ def _streams(broad: bool = False) -> list[dict]:
 STREAMS = _streams(False)
 
 
+def website_exclude_list(domains: set[str] | list[str]) -> list[str]:
+    """Normalize domains for Icypeas currentCompanyWebsite.exclude (bare host)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for d in domains:
+        host = norm_domain(d)
+        if not host or host in FREEMAIL or host in seen:
+            continue
+        seen.add(host)
+        out.append(host)
+    return out
+
+
+def with_website_excludes(query: dict, domains: list[str]) -> dict:
+    """Inject company-website excludes into the Icypeas query BEFORE search.
+
+    Icypeas bills per returned row — excluding known domains in-query avoids
+    paying for companies already in PlusVibe. LinkedIn profile URLs are NOT a
+    valid Icypeas query key; those are skipped post-search / pre-email (free).
+    """
+    q = json.loads(json.dumps(query))  # deep copy
+    if domains:
+        q["currentCompanyWebsite"] = {"exclude": domains}
+    return q
+
+
 def call(
     endpoint: str,
     body: dict | None = None,
@@ -523,19 +549,29 @@ def extract_email(eout: dict) -> str | None:
 def scope_only(broad: bool = False) -> None:
     global STREAMS
     STREAMS = _streams(broad=broad)
+    excl = load_excludes()
+    site_excl = website_exclude_list(excl["domains"])
     print(f"=== FREE TAM (icypeas.people.search.count) — MARS [{'BROAD' if broad else 'precise'}] ===")
+    print(f"In-query website excludes: {len(site_excl)} (from PlusVibe domains)")
+    print(f"LinkedIn pre-email skips: {len(excl['linkedins'])} (not an Icypeas query field)")
     total = 0
+    total_raw = 0
     for s in STREAMS:
-        out, cost = call("icypeas.people.search.count", {"query": s["query"]})
+        raw, cost = call("icypeas.people.search.count", {"query": s["query"]})
         assert cost == 0, cost
+        q = with_website_excludes(s["query"], site_excl)
+        out, cost = call("icypeas.people.search.count", {"query": q})
+        assert cost == 0, cost
+        n_raw = raw.get("total") or 0
         n = out.get("total") or 0
+        total_raw += n_raw
         total += n
-        print(f"  {s['id']:12} {n:>7,}  {s['name']}")
-    print(f"TOTAL: {total:,}")
+        print(f"  {s['id']:12} {n:>7,}  (raw {n_raw:,})  {s['name']}")
+    print(f"TOTAL with website exclude: {total:,}  (raw {total_raw:,})")
     print()
-    # rough spend for 2k ready @ observed cheap-scrape unit economics
-    est_2k = 2000 * 0.00225 + 2000 * 0.00178  # search+blitz + MV
-    print(f"Est. spend for 2000 ready (search+blitz+MV): ~${est_2k:.2f}")
+    est = total * 0.00038 + min(total, 2000) * 0.0015  # search upper + email attempts
+    print(f"Rough spend upper-bound if searching full TAM then emailing: ~${est:.2f}")
+    print(f"HARD_SPEND_CAP_USD=${HARD_SPEND_CAP_USD:.2f} — confirm before paid run")
     print(f"PlusVibe exclude loaded from: {EXCLUDE_PATH} (exists={EXCLUDE_PATH.exists()})")
 
 
@@ -646,8 +682,12 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
             print(f"  seed skip {csv_path}: {e}")
     print(
         f"After seed: seen_li={len(seen_li)} seen_email={len(seen_email)} "
-        f"(PV domain exclude OFF; batch domain dedupe ON)"
+        f"(batch domain dedupe ON)"
     )
+    # In-query Icypeas exclude — do not pay search rows for known company websites
+    site_excl = website_exclude_list(excl["domains"])
+    print(f"Icypeas currentCompanyWebsite.exclude: {len(site_excl)} domains")
+    print(f"LinkedIn skip before Blitz (post-search): {len(seen_li)}")
 
     def pay(endpoint, body=None, query=None, method=None, fallback_cost_micro: int = 0):
         nonlocal spend_micro
@@ -672,10 +712,11 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
         }
         progress_path.write_text(json.dumps(payload, indent=2))
 
-    print("=== FREE TAM ===")
+    print("=== FREE TAM (with website excludes in query) ===")
     tam = {}
     for s in STREAMS:
-        out = pay("icypeas.people.search.count", {"query": s["query"]})
+        q = with_website_excludes(s["query"], site_excl)
+        out = pay("icypeas.people.search.count", {"query": q})
         tam[s["id"]] = out.get("total") or 0
         print(f"  {s['id']}: {tam[s['id']]:,}")
 
@@ -701,8 +742,9 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
         max_pages = 40
 
         cand_goal = max(want * 3, want + 15)
+        q = with_website_excludes(s["query"], site_excl)
         while pages < max_pages and len(candidates) < cand_goal:
-            body: dict = {"query": s["query"], "pagination": {"size": 50}}
+            body: dict = {"query": q, "pagination": {"size": 50}}
             if token:
                 body["pagination"]["token"] = token
             try:
@@ -934,6 +976,14 @@ def main() -> None:
     if args.pilot or args.full:
         if args.confirm_spend is None:
             print("Paid run requires --confirm-spend USD", file=sys.stderr)
+            sys.exit(2)
+        if args.confirm_spend > HARD_SPEND_CAP_USD:
+            print(
+                f"Refusing --confirm-spend ${args.confirm_spend:.2f}: "
+                f"HARD_SPEND_CAP_USD=${HARD_SPEND_CAP_USD:.2f}. "
+                "Ask the user before raising the cap.",
+                file=sys.stderr,
+            )
             sys.exit(2)
         ready = 40 if args.pilot else args.full
         run(
