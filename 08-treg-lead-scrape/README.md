@@ -13,6 +13,8 @@ This folder holds the **paste-ready master prompt** for any new chat that scrape
 
 **Exclude reality check:** domains/titles/keywords go in the Icypeas query before any paid rows. Person LinkedIn URLs cannot be excluded in Icypeas (schema rejects `profileUrl`) — skip those only before Blitz. See `docs/icypeas-exclude-capabilities.md`.
 
-**Agent must:** ask who to target → stay on this pipeline (no mid-run course changes) → show TAM **after** in-query excludes → ask you for `--confirm-spend` (never invent a cost cap).
+**Agent must:** ask who to target → ask **ready-target vs pull-N** volume mode → stay on this pipeline (no mid-run course changes) → show TAM **after** in-query excludes → ask you for `--confirm-spend` (never invent a cost cap).
+
+**Volume modes:** “2000 ready leads” = keep going until 2000 have email + fields. “Scrape 2000 Icypeas leads” = pull 2000 people from Icypeas, Blitz that batch only.
 
 **Benchmark:** ~$2–2.5 per 1,000 ready when filters are tight (Cheap Scrape / ATC facility). If you see $35–50/1k, stop — excludes or gates are wrong.

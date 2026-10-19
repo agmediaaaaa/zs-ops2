@@ -1,12 +1,13 @@
 ---
 name: lead-scrape-gates
 description: >-
-  Hard gates for Treg list builds: GitHub-first context, pull-N Icypeas people
-  search with in-query title/domain/keyword excludes, then Blitz email enrich
-  (no Icypeas email), free-count scope first, catalog quote + ask for
-  --confirm-spend before paid calls, pilot before full, early-stop bad unit
-  economics, Supabase skip for known identities (cost only), Plusvibe-only
-  suppress for ready, always report. Use whenever scraping or enriching cold leads.
+  Hard gates for Treg list builds: GitHub-first context, ask ready-target vs
+  pull-N volume mode, Icypeas people search with in-query title/domain/keyword
+  excludes, then Blitz email enrich (no Icypeas email), free-count scope first,
+  catalog quote + ask for --confirm-spend before paid calls, pilot before full,
+  early-stop bad unit economics, Supabase skip for known identities (cost only),
+  Plusvibe-only suppress for ready, always report. Use whenever scraping or
+  enriching cold leads.
 ---
 
 # Lead scrape gates (mandatory)
@@ -27,9 +28,21 @@ User-facing master prompt (paste into new chats): `08-treg-lead-scrape/MASTER-PR
 4. Use PlusVibe / Supabase only for live exclude lists and upload after the plan is clear.
 5. **Do not change course mid-scrape** (provider / filters / pathway) without asking.
 
-## 0. Pull-N model (locked for all future runs)
+## 0. Volume modes — always ask which one
 
-When the user asks for **N prospects** (e.g. “100 prospects”, `--pull 100`):
+Do **not** assume. If the user says ambiguous “N leads/prospects”, ask:
+
+> Ready-target (N with email + fields) or Pull-N (N Icypeas people, then Blitz whatever hits)?
+
+### Mode A — Ready-target (“N ready leads”)
+
+| Meaning | Not meaning |
+|---------|-------------|
+| Keep Icypeas → Blitz until **N ready** rows (email + required fields) | Stop after N Icypeas people regardless of hit rate |
+| Quote search overpull + Blitz attempts to reach N ready | Assume N search rows = N ready |
+| Stop on user cost cap / TAM / bad unit econ; report shortfall | Switch providers alone to force N |
+
+### Mode B — Pull-N (“scrape N Icypeas leads”, `--pull N`)
 
 | Meaning | Not meaning |
 |---------|-------------|
@@ -85,7 +98,8 @@ python scripts/enrich_list.py <list_id> --estimate
 python scripts/pilot_icypeas_blitz_four_verticals.py --scope-only
 ```
 
-Quote people volume = **pull N**, not assumed ready N.
+Quote people volume from the chosen mode: pull-N quotes N search rows; ready-target
+quotes expected Icypeas overpull + Blitz attempts to hit N ready.
 
 Then **ask the user** for the hard cost cap. Do not invent one.
 

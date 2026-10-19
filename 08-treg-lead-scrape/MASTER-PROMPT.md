@@ -15,8 +15,9 @@ OPERATING CONTRACT (READ FIRST)
 
 A. UNDERSTAND → ASK → WAIT
    After reading the repo files below, STOP and ask me targeting questions.
-   I will tell you who to target. Do NOT invent ICP, verticals, volume, or
-   spend caps. Do NOT start free TAM or paid calls until I answer.
+   I will tell you who to target. Do NOT invent ICP, verticals, volume mode,
+   volume, or spend caps. Do NOT start free TAM or paid calls until I answer.
+   Always ask which volume mode I mean (ready-target vs pull-N) — see §5.
 
 B. STAY ON TASK — NO WANDERING
    Do only what this scrape requires:
@@ -114,7 +115,7 @@ X-Treg-Route-Exclude: aiark,icypeas
 - Do NOT use AI Ark
 - Do NOT use ContactOut verify for volume
 - Do NOT use QuickEnrich / Trykitt / Leadsforge as a mid-run detour
-- Do NOT keep paging until N “ready emails” — Pull-N = pull N people, enrich that batch only
+- Do NOT assume volume mode — ask ready-target vs pull-N (see §5)
 - Do NOT change this pathway mid-scrape without asking me first
 
 ================================================================
@@ -207,9 +208,19 @@ After reading the repo, ask me these (skip any I already answered in the first m
 1. Client code (e.g. ATC, MARS, GWS, ZS)?
 2. Who to target: titles, seniority, geo, headcount, industries, keywords include?
 3. What to exclude: titles, keywords, domains, PlusVibe workspace, existing lists?
-4. Target volume: pull N people, or approximate ready count? Pilot size?
-5. Required fields (default: name, title, employee count, company desc, email, location, LinkedIn, company website)?
-6. Upload destination (Supabase list name / PlusVibe campaign)?
+4. **Volume mode (ALWAYS ASK if not crystal clear) — pick one:**
+   - **Ready-target:** “I need N **ready** leads” = N people with email + required fields.
+     Keep Icypeas→Blitz until N ready (or TAM/cap exhausted). Quote must model
+     search overpull + Blitz attempts, not assume 1:1.
+   - **Pull-N (Icypeas scrape):** “Scrape N **Icypeas** leads / pull N people” =
+     query exactly N people from Icypeas, then Blitz that batch only; ready = whatever
+     emails hit. Do **not** keep paging to force N emails.
+5. Pilot size?
+6. Required fields (default: name, title, employee count, company desc, email, location, LinkedIn, company website)?
+7. Upload destination (Supabase list name / PlusVibe campaign)?
+
+If I say ambiguous “2000 leads” / “2000 prospects” without “ready” or “Icypeas/pull”,
+ASK which mode before quoting or spending.
 
 WAIT for my answers. Then propose the Icypeas query (include + exclude) for approval.
 
@@ -265,18 +276,39 @@ WAIT for my answers. Then propose the Icypeas query (include + exclude) for appr
 - Report spend continuously; abort at MY hard cap
 
 ================================================================
-## 5. PULL-N MODEL (LOCKED)
+## 5. VOLUME MODES — ALWAYS ASK WHICH ONE
 ================================================================
 
-When I say “100 prospects” / `--pull 100`:
+Two different jobs. Do **not** collapse them. If unclear, ask.
+
+### Mode A — Ready-target (“N ready leads”)
+
+When I say: “2000 **ready** leads”, “I need 2000 with emails”, “2000 usable / campaign-ready”
 
 | Means | Does NOT mean |
 |-------|----------------|
-| Pull 100 people from Icypeas (after title/ICP filter) | Keep searching until 100 ready emails |
-| Enrich that fixed batch only | Page → enrich → page until ready target |
-| Accept whatever emails validate from those 100 | Guarantee 100 emails |
+| Keep running Icypeas → Blitz until **N rows** have email + required fields | Stop after N Icypeas people regardless of email hit rate |
+| Quote must include expected overpull (Icypeas rows + Blitz attempts to reach N ready) | Assume N Icypeas rows = N ready |
+| Stop early on my cost cap, dead unit economics, or TAM exhaustion — then report shortfall | Invent a new provider/path to force N without asking |
 
-Coverage = ready / pulled (ready < pulled is correct).
+Ready = email found (Blitz) + required fields (name, title, emp count, company desc, location, LinkedIn, company website unless I waived any).
+
+### Mode B — Pull-N / Icypeas scrape (“scrape N Icypeas leads”)
+
+When I say: “scrape 2000 **Icypeas** leads”, “pull 2000 people”, `--pull 2000`
+
+| Means | Does NOT mean |
+|-------|----------------|
+| Pull **exactly N people** from Icypeas (after title/ICP filter) | Keep searching until N ready emails |
+| Enrich **that fixed batch only** with Blitz | Page → enrich → page until ready target |
+| Accept whatever emails validate from those N | Guarantee N emails |
+
+Coverage = ready / pulled (ready < pulled is correct and expected).
+
+### Ambiguous phrases → ASK
+
+“2000 leads”, “2000 prospects”, “get me 2000”, “scrape 2000” without “ready” or “Icypeas/pull”
+→ Ask: “Do you want **2000 ready** (email + fields) or **pull 2000 from Icypeas** then Blitz whatever hits?”
 
 ================================================================
 ## 6. REQUIRED FIELDS
@@ -327,7 +359,8 @@ Banned:
 
 1. Starting in Notion / Airtable / Drive / Slack instead of this GitHub repo
 2. Wandering / side research instead of asking me who to target
-3. Inventing ICP, verticals, volume, or a cost cap without asking
+3. Inventing ICP, verticals, volume mode, volume, or a cost cap without asking
+3b. Assuming ready-target when I meant pull-N (or the reverse) without asking
 4. Showing TAM without applying my excludes (or treating raw TAM as the plan number)
 5. Paid Icypeas search **without** `currentJobTitle.exclude` + `currentCompanyWebsite.exclude` in-query when exclude lists exist
 6. Paying Icypeas first, then filtering domains/titles in Python, then Blitz (wrong order)
@@ -353,10 +386,10 @@ If you are at ~$35–50/1k or 100+ rows/ready, you are doing it wrong — STOP a
 ================================================================
 
 1. Confirm you read the repo files in §0 (one short line).
-2. ASK ME the targeting questions in Gate 0. Then WAIT.
+2. ASK ME the targeting questions in Gate 0 — including **ready-target vs pull-N**. Then WAIT.
 3. After I answer: propose the Icypeas query (include + exclude) for my approval.
 4. After I approve the query: run free TAM WITH excludes; show raw vs after-excludes TAM map.
-5. Show the cost quote. Ask: “What hard cost cap should I use? Reply with --confirm-spend <USD>.”
+5. Show the cost quote for the chosen volume mode. Ask: “What hard cost cap should I use? Reply with --confirm-spend <USD>.”
 6. WAIT for my --confirm-spend. Do not invent a cap. Do not spend yet.
 7. Run pilot only on the locked Icypeas → Blitz path. Report. Ask before full or any path change.
 ```

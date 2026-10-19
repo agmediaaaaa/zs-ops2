@@ -31,10 +31,13 @@ Cost matrix: `docs/waterfall-cost-matrix.md`
 
 ## Hard rules
 
-1. **Pull-N semantics (locked):** When the user says “100 prospects” (or any N), that means **pull N people from Icypeas people search**, then enrich **that batch only**. Ready emails = whatever validates from those N — do **not** keep paging until N ready emails.
+1. **Volume mode — always ask if unclear:**
+   - **Ready-target:** “N ready leads” = keep Icypeas→Blitz until N rows have email + required fields. Quote overpull; stop on cap/TAM/bad unit econ and report shortfall.
+   - **Pull-N:** “scrape N Icypeas leads” / `--pull N` = pull N people from Icypeas, Blitz **that batch only**; ready = whatever hits. Do **not** page until N emails.
+   - Ambiguous “N leads/prospects” → ask which mode before quoting or spending.
 2. **Staged pipeline (locked — do not change mid-run):**
-   1. Icypeas people search → exactly N candidates (post title/ICP filter) with **in-query** title/domain/keyword excludes
-   2. Email find on that batch (Supabase cache first) — **never Icypeas email find / `icypeas.bulk.search`**
+   1. Icypeas people search with **in-query** title/domain/keyword excludes (volume per mode above)
+   2. Email find on candidates (Supabase cache first) — **never Icypeas email find / `icypeas.bulk.search`**
    3. MV-verify found emails (concurrent) only after path is proven
    4. Bulk upload to Supabase (desc, loc, etc.)
    If you want Leadsforge / QuickEnrich / Trykitt / different filters: **stop and ask** — never switch course alone.
@@ -54,7 +57,7 @@ Cost matrix: `docs/waterfall-cost-matrix.md`
    - Enrich: `scripts/enrich_list.py`
    - GWS lists: `scripts/gws_list_builder.py`
    - Cheap Scrape ref: `scripts/pilot_icypeas_blitz_four_verticals.py`
-   - Mars / ATC / vertical builders: `--pull N` (people pulled), not `--ready-target`
+   - Mars / ATC / vertical builders: `--pull N` (pull-N) or ready-target only if user asked for ready
 10. **Email waterfall (default):** Supabase cache → Blitz → QuickEnrich(+MV) → Trykitt(+MV). **No Icypeas email.** Opt-in only via `--with-icypeas-email`. Default preferred path when LinkedIn+desc exist: **Icypeas → Blitz only**.
 11. **Never ContactOut verify** for volume (free but 429-bound). Optional `--with-pattern-mv` only when the user asks for that cost mode.
 12. **Always report:** quote, actual `X-Treg-Cost-Micro` spend, variance, `pulled` / `ready` / coverage, sources, rows-per-ready, $/1k.
