@@ -189,6 +189,19 @@ If any are missing:
 
 ---
 
+## TREG LEAD SCRAPE (WHEN APPLICABLE)
+
+If the task is scraping / enriching cold leads via **Treg / Icypeas / Blitz**:
+
+1. Read `08-treg-lead-scrape/MASTER-PROMPT.md` and `.cursor/skills/lead-scrape-gates/SKILL.md` **before** Notion, Drive, or Slack.
+2. Default path: Icypeas people search (in-query title/domain/keyword excludes) → Blitz email find.
+3. Free TAM + catalog quote first; **ask** for `--confirm-spend <USD>` before any paid call.
+4. Pilot before full volume; abort on bad unit economics.
+
+Do not freestyle paid Treg spend.  
+
+---
+
 ## PLUSVIBE OUTPUT (WHEN APPLICABLE)
 
 If the client ships copy through **PlusVibe**, follow `05-copy-messaging-framework-agent-5/SOP-plusvibe-templating.md` in addition to the copy and spam-guard SOPs.

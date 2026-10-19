@@ -1,0 +1,53 @@
+---
+description: "Mandatory cost-exact Treg lead scrape/enrich waterfall — GitHub-first, ask before spend"
+globs:
+alwaysApply: true
+---
+
+# Lead scrape / enrich — mandatory process
+
+Whenever this chat (or any agent in this repo) scrapes, searches, discovers, or enriches B2B leads via Treg / Icypeas / LeadsForge / MillionVerifier / Blitz / QuickEnrich / Trykitt / AI Ark (or equivalent), follow **lead-scrape-gates** and the cost-exact waterfall. Do not freestyle paid Treg calls.
+
+## Context source of truth (read FIRST)
+
+Before Notion, Google Drive, Slack, Airtable, memory search, or other external MCPs for scrape SOPs/filters:
+
+1. `.cursor/rules/lead-scrape.mdc` (this file)
+2. `.cursor/skills/lead-scrape-gates/SKILL.md`
+3. `docs/waterfall-cost-matrix.md`
+4. `08-treg-lead-scrape/MASTER-PROMPT.md`
+5. Matching runners under `scripts/`
+
+Do **not** start by searching Notion / Drive / Slack / Airtable for “how we scrape.” Those are distractions. Ask the user if ICP filters, volume, or spend cap are missing.
+
+Paste-ready user prompt: `08-treg-lead-scrape/MASTER-PROMPT.md`
+
+Cost matrix: `docs/waterfall-cost-matrix.md`
+
+## Hard rules
+
+1. **Pull-N semantics (locked):** When the user says “100 prospects” (or any N), that means **pull N people from Icypeas people search**, then enrich **that batch only**. Ready emails = whatever validates from those N — do **not** keep paging until N ready emails.
+2. **Staged pipeline (all future runs):**
+   1. Icypeas people search → exactly N candidates (post title/ICP filter) with **in-query** title/domain/keyword excludes
+   2. Email find on that batch (Supabase cache first) — **never Icypeas email find / `icypeas.bulk.search`**
+   3. MV-verify found emails (concurrent) only after path is proven
+   4. Bulk upload to Supabase (desc, loc, etc.)
+3. **Exclusions in the initial Icypeas query:** `currentJobTitle.include` **and** `.exclude`, `keyword.exclude`, `currentCompanyWebsite.exclude` (existing domains). Skip known LinkedIn/email **before** Blitz. Never pay search rows then drop junk in Python as the primary filter.
+4. **Scope first (free):** Run free counts before any paid call. Present TAM **with excludes applied**.
+5. **Catalog quote:** Use `scripts/treg_pricing.py` (or `--estimate` / `--scope-only` on runners). Never invent flat averages like `$0.003/lead`.
+6. **Spend confirm:** Stop and **ask** for explicit `--confirm-spend <usd>` (at or above expected) before paid find/verify/search pages. Never invent your own $10–14 caps. “Just run it” / “scrape 2k” is not approval for full volume.
+7. **Pilot before full:** Small pilot + quote-vs-actual report before multi-thousand runs. Re-confirm spend for full.
+8. **Early-stop bad unit economics:** If rows/ready ≫ ~12, email attempts/ready ≫ ~4, or $/1k ≫ ~$5–10 → stop, report, ask. Do not broaden filters into the wallet.
+9. **Use the runners**, not ad-hoc `/call/` loops:
+   - Quote: `scripts/treg_pricing.py`
+   - Companies: `scripts/discover_companies.py`
+   - Enrich: `scripts/enrich_list.py`
+   - GWS lists: `scripts/gws_list_builder.py`
+   - Cheap Scrape ref: `scripts/pilot_icypeas_blitz_four_verticals.py`
+   - Mars / ATC / vertical builders: `--pull N` (people pulled), not `--ready-target`
+10. **Email waterfall (default):** Supabase cache → Blitz → QuickEnrich(+MV) → Trykitt(+MV). **No Icypeas email.** Opt-in only via `--with-icypeas-email`. Default preferred path when LinkedIn+desc exist: **Icypeas → Blitz only**.
+11. **Never ContactOut verify** for volume (free but 429-bound). Optional `--with-pattern-mv` only when the user asks for that cost mode.
+12. **Always report:** quote, actual `X-Treg-Cost-Micro` spend, variance, `pulled` / `ready` / coverage, sources, rows-per-ready, $/1k.
+13. **Bulk Supabase only** for 100+ rows — no per-lead upsert loops.
+
+If the request is unrelated to lead scrape/enrich/Treg spend, ignore this rule.
