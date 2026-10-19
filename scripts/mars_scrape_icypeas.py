@@ -35,7 +35,13 @@ from urllib.parse import urlparse
 # Absolute max Treg spend for any paid MARS run unless user explicitly overrides
 # with a LOWER --confirm-spend. Never allow confirm-spend above this without
 # changing HARD_SPEND_CAP_USD after user approval.
-HARD_SPEND_CAP_USD = 2.50  # session auth; remaining of this budget was ~$0.08 after cap25 runs
+HARD_SPEND_CAP_USD = 2.00  # user-authorized hard cap for this run
+
+# Abort a stream / run early when unit economics go bad (avoid tail spend for tiny yield).
+MAX_SEARCH_ROWS_PER_READY = 12   # Cheap Scrape ~3–5; stop paging well before 12
+MAX_EMAIL_ATTEMPTS_PER_READY = 4  # Cheap Scrape ~1.5–2; stop emailing past 4
+MIN_CAND_YIELD = 0.04             # candidates / searched rows; below this after 2 pages → stop
+RESERVE_USD = 0.05                # leave buffer; do not start new work under this remaining
 
 
 TOKEN = (
@@ -782,18 +788,30 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
         if want <= 0:
             continue
 
-        print(f"\n--- {s['id']} {s['name']} (want {want}) ---")
+        remaining = hard_cap - spend_micro / 1e6
+        if remaining <= RESERVE_USD:
+            print(
+                f"\nSTOP: remaining ${remaining:.4f} <= reserve ${RESERVE_USD} "
+                f"(ready={len(rows)}) — skip further streams"
+            )
+            break
+
+        print(f"\n--- {s['id']} {s['name']} (want {want}) rem=${remaining:.3f} ---")
         candidates: list[dict] = []
         token = None
         searched = 0
         pages = 0
-        max_pages = 40
+        stream_start_micro = spend_micro
+        abort_reason = ""
 
         # Keep search spend tight: don't page the entire TAM when want is inflated.
-        cand_goal = min(max(want * 2, 20), 120)
-        max_pages = min(max_pages, 12)  # <= 600 search rows / stream
+        cand_goal = min(max(want * 2, 20), 80)
+        max_pages = 8  # <= 400 search rows / stream
         q = with_website_excludes(s["query"], site_excl)
         while pages < max_pages and len(candidates) < cand_goal:
+            if hard_cap - spend_micro / 1e6 <= RESERVE_USD:
+                abort_reason = "reserve"
+                break
             body: dict = {"query": q, "pagination": {"size": 50}}
             if token:
                 body["pagination"]["token"] = token
@@ -801,6 +819,7 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
                 out = pay("icypeas.people.search", body)
             except (RuntimeError, urllib.error.HTTPError) as e:
                 print(f"  search stop: {e}")
+                abort_reason = "cap/search"
                 break
             leads = out.get("leads") or []
             pages += 1
@@ -824,10 +843,20 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
                 if not li or li in seen_li:
                     continue
                 dom = norm_domain(L.get("lastCompanyWebsite") or "")
-                if dom and dom in seen_domain:
+                if dom and (dom in seen_domain or dom in excl["domains"]):
                     continue
                 candidates.append(L)
                 if len(candidates) >= cand_goal:
+                    break
+            # Early abort: bad candidate yield after enough pages — don't keep paying for junk
+            if pages >= 2 and searched >= 80:
+                yield_rate = len(candidates) / max(searched, 1)
+                if yield_rate < MIN_CAND_YIELD:
+                    abort_reason = f"low_cand_yield={yield_rate:.3f}"
+                    print(
+                        f"  search abort: {abort_reason} "
+                        f"(cand={len(candidates)} searched={searched})"
+                    )
                     break
             token = (out.get("pagination") or {}).get("token")
             if not token or len(candidates) >= cand_goal:
@@ -836,8 +865,25 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
 
         ready_here: list[dict] = []
         attempts = hits = pv_skip = freemail_skip = mv_fail = 0
+        miss_streak = 0
         for L in candidates:
             if len(ready_here) >= want or len(rows) >= ready_target:
+                break
+            if hard_cap - spend_micro / 1e6 <= RESERVE_USD:
+                abort_reason = abort_reason or "reserve"
+                break
+            # Stop emailing if attempts/ready blows past Cheap Scrape range
+            if ready_here and attempts / max(len(ready_here), 1) > MAX_EMAIL_ATTEMPTS_PER_READY:
+                abort_reason = f"email_attempts_per_ready={attempts/len(ready_here):.1f}"
+                print(f"  email abort: {abort_reason}")
+                break
+            if not ready_here and attempts >= 12:
+                abort_reason = "no_email_hits_after_12"
+                print(f"  email abort: {abort_reason}")
+                break
+            if miss_streak >= 10 and len(ready_here) < 3:
+                abort_reason = f"miss_streak={miss_streak}"
+                print(f"  email abort: {abort_reason}")
                 break
             li = norm_linkedin(L.get("profileUrl") or "")
             if not li or li in seen_li:
@@ -847,21 +893,26 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
                 eout = pay("blitzapi.people.email.find", {"person_linkedin_url": li})
             except (RuntimeError, urllib.error.HTTPError) as e:
                 print(f"  email stop: {e}")
+                abort_reason = "cap/email"
                 break
             email = extract_email(eout)
             if not email or "@" not in email:
+                miss_streak += 1
                 time.sleep(0.05)
                 continue
             hits += 1
             domain = email.split("@", 1)[1]
             if domain in FREEMAIL:
                 freemail_skip += 1
+                miss_streak += 1
                 continue
             if email in seen_email:
                 pv_skip += 1
+                miss_streak += 1
                 continue
             if domain in seen_domain:
                 pv_skip += 1
+                miss_streak += 1
                 continue
 
             mv_status = "unverified"
@@ -876,14 +927,17 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
                     mv_status = str(mv.get("result") or "").lower()
                     if mv_status not in MV_VALID:
                         mv_fail += 1
+                        miss_streak += 1
                         time.sleep(0.05)
                         continue
                 except RuntimeError as e:
                     print(f"  mv/cap stop: {e}")
+                    abort_reason = "cap/mv"
                     break
                 except urllib.error.HTTPError as e:
                     print(f"  mv http {e.code}, skipping email")
                     mv_fail += 1
+                    miss_streak += 1
                     time.sleep(0.05)
                     continue
 
@@ -911,12 +965,21 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
             seen_email.add(email)
             if domain:
                 seen_domain.add(domain)
+            miss_streak = 0
             print(
                 f"  ✓ [{len(rows)}/{ready_target}] {row['name']} <{email}> "
                 f"| {row['job_title']} @ {row['company_name']}"
             )
             save_progress({"last_stream": s["id"]})
             time.sleep(0.06)
+
+        stream_spend = (spend_micro - stream_start_micro) / 1e6
+        # If this stream burned budget for almost nothing, note it (already aborted above)
+        if ready_here and searched / max(len(ready_here), 1) > MAX_SEARCH_ROWS_PER_READY:
+            print(
+                f"  warn: search_rows/ready="
+                f"{searched/len(ready_here):.1f} (>{MAX_SEARCH_ROWS_PER_READY})"
+            )
 
         camps.append(
             {
@@ -930,11 +993,15 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
                 "freemail_skipped": freemail_skip,
                 "mv_fail": mv_fail,
                 "ready": len(ready_here),
+                "stream_spend_usd": round(stream_spend, 6),
+                "abort_reason": abort_reason or None,
             }
         )
         print(
             f"  stream done: ready={len(ready_here)} searched={searched} "
-            f"candidates={len(candidates)} email_hit={hits}/{attempts} pv_skip={pv_skip}"
+            f"candidates={len(candidates)} email_hit={hits}/{attempts} "
+            f"pv_skip={pv_skip} spend=${stream_spend:.4f}"
+            + (f" abort={abort_reason}" if abort_reason else "")
         )
 
     spend = spend_micro / 1e6
