@@ -2,9 +2,26 @@
 .env
 .env.local
 
+# Cursor MCP may contain live tokens — commit .cursor/mcp.json.example instead
+.cursor/mcp.json
+
 # Run artifacts (may contain PII / large exports)
 artifacts/
 outputs/
+
+# CSVs and files with lead PII (names, emails, LinkedIn URLs)
+*.csv
+*_leads.json
+*_batch*.json
+*_export*.json
+lead_data/
+exports/
+
+# Run logs that may contain secrets or PII
+*_run.log
+*_debug.log
+run_*.txt
+*.log
 
 # Python
 __pycache__/
