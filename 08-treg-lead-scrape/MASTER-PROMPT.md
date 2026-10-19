@@ -408,7 +408,7 @@ If you are at ~$35–50/1k or 100+ rows/ready, you are doing it wrong — STOP a
 | File | Role |
 |------|------|
 | `.cursor/rules/lead-scrape.mdc` | Always-on rule for scrape chats in this repo |
-| `.cursor/skills/lead-scrape-gates/SKILL.md` | Hard gates + Pull-N + tool order |
+| `.cursor/skills/lead-scrape-gates/SKILL.md` | Hard gates + volume modes + tool order |
 | `docs/waterfall-cost-matrix.md` | Catalog rates / billing units |
 | `scripts/treg_pricing.py` | Catalog quote helper (when present on branch) |
 | `scripts/pilot_icypeas_blitz_four_verticals.py` | Cheap Scrape reference runner |
