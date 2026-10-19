@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """List-based enrichment runner using bulk/batch operations.
 
-Jessica's requirements:
-- Use bulk/batch endpoints where available
-- Concurrent requests with rate-limit backoff
-- Detailed run report per list (searches, sources, costs per provider)
-- Fall back to per-lead only where no bulk exists
+Default find-first waterfall (ContactOut excluded):
+  Supabase cache → Blitz → QuickEnrich(+MV) → Trykitt(+MV)
+  → Icypeas/LeadsForge bulk spill for miss queues ≥100.
+
+Optional --with-pattern-mv for pattern+MV before find.
+Catalog quotes via scripts/treg_pricing.py (--estimate).
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ import re
 # Import enrichment logic from gws_icypeas_sheet2
 sys.path.insert(0, str(Path(__file__).parent))
 import gws_icypeas_sheet2 as enricher
+import treg_pricing
 
 SUPABASE_URL = os.environ.get(
     "SUPABASE_URL", "https://npkdhahdvilcctjwzdlf.supabase.co"
@@ -417,53 +419,158 @@ def bulk_verify_mv(emails: list[str], report: RunReport) -> dict[str, str]:
     return results
 
 
-def bulk_verify_contactout(emails: list[str], report: RunReport) -> dict[str, str]:
-    """Bulk verify with ContactOut (free, concurrent batch)."""
-    results = {}
-    
-    if not emails:
-        return results
-    
-    batch_size = min(len(emails), 30)  # Smaller batch for free tier
-    
-    def verify_one(email: str) -> tuple[str, str]:
+
+def bulk_find_icypeas(leads: list[dict], report: RunReport) -> dict[str, tuple[str, int]]:
+    """Spill miss queue to Icypeas bulk email-search (up to 5000 rows).
+
+    Returns map linkedin_or_key -> (email, cost_micro_share).
+    """
+    if not leads:
+        return {}
+
+    # Icypeas bulk: [["first","last","domain"], ...]
+    rows = []
+    keys = []
+    for lead in leads:
+        first = (lead.get("first_name") or "").strip()
+        last = (lead.get("last_name") or "").strip()
+        domain = (lead.get("domain") or "").strip()
+        if not first or not last or not domain:
+            continue
+        rows.append([first, last, domain])
+        keys.append(lead.get("linkedin") or f"{first}.{last}@{domain}".lower())
+
+    if not rows:
+        return {}
+
+    # Cap at 5000 per API
+    rows = rows[:5000]
+    keys = keys[:5000]
+
+    try:
+        data, meta = enricher.treg(
+            "POST",
+            "/call/icypeas.bulk.search",
+            {
+                "name": f"zs-ops2-enrich-{int(time.time())}",
+                "task": "email-search",
+                "data": rows,
+            },
+            timeout=120,
+            retries=2,
+        )
+    except Exception as e:
+        print(f"  bulk icypeas start failed: {e}", flush=True)
+        return {}
+
+    start_cost = int(meta.get("cost_micro") or 0)
+    enricher.charge(start_cost)
+    file_id = None
+    if isinstance(data, dict):
+        file_id = data.get("file") or data.get("fileId") or data.get("id")
+        inner = data.get("data")
+        if not file_id and isinstance(inner, dict):
+            file_id = inner.get("file") or inner.get("fileId") or inner.get("id")
+        if not file_id and isinstance(inner, str):
+            file_id = inner
+
+    # Poll status then read results
+    results_map: dict[str, tuple[str, int]] = {}
+    if not file_id:
+        # Synchronous-ish response with results inline
+        items = []
+        if isinstance(data, dict):
+            for k in ("results", "data", "rows", "items"):
+                if isinstance(data.get(k), list):
+                    items = data[k]
+                    break
+        per = start_cost // max(len(keys), 1) if start_cost else 0
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            email = item.get("email") or ""
+            result_obj = item.get("result")
+            if not email and isinstance(result_obj, dict):
+                email = result_obj.get("email") or ""
+            if email and i < len(keys):
+                results_map[keys[i]] = (str(email).strip(), per)
+        report.add_bulk_verify(len(rows), start_cost, "icypeas_bulk")
+        if start_cost:
+            report.cost_by_provider["icypeas_bulk"] += start_cost / 1_000_000
+        return results_map
+
+    # Async job: poll files.read then results.read
+    deadline = time.time() + 900
+    while time.time() < deadline:
         try:
-            data, meta = enricher.treg(
+            st, smeta = enricher.treg(
                 "GET",
-                "/call/contactout.people.email.verify",
-                query={"email": email},
-                timeout=20,
-                retries=2,
+                "/call/icypeas.search.files.read",
+                query={"id": file_id},
+                timeout=30,
             )
-            cost = int(meta.get("cost_micro") or 0)
-            enricher.charge(cost)
+            sc = int(smeta.get("cost_micro") or 0)
+            enricher.charge(sc)
             status = ""
-            if isinstance(data, dict):
-                inner = data.get("data") if isinstance(data.get("data"), dict) else data
-                status = str(
-                    (inner or {}).get("status")
-                    or (inner or {}).get("result")
-                    or data.get("status")
-                    or ""
-                ).lower()
-            return email, status
-        except urllib.error.HTTPError as e:
-            if e.code == 429:
-                report.add_rate_limit_hit()
-                time.sleep(1.5)
-                return verify_one(email)  # Retry
-            return email, "error"
-        except Exception:
-            return email, "error"
-    
-    with ThreadPoolExecutor(max_workers=batch_size) as pool:
-        futures = [pool.submit(verify_one, em) for em in emails]
-        for fut in as_completed(futures):
-            email, status = fut.result()
-            results[email] = status
-    
-    report.add_bulk_verify(len(emails), 0, "contactout")
-    return results
+            if isinstance(st, dict):
+                status = str(st.get("status") or st.get("state") or "").lower()
+                inner = st.get("data") if isinstance(st.get("data"), dict) else {}
+                status = status or str(inner.get("status") or "").lower()
+            if status in ("done", "finished", "completed", "success", "ok"):
+                break
+            if status in ("error", "failed", "aborted"):
+                print(f"  bulk icypeas status={status}", flush=True)
+                return {}
+        except Exception as e:
+            print(f"  bulk poll err: {e}", flush=True)
+        time.sleep(3)
+
+    try:
+        res, rmeta = enricher.treg(
+            "GET",
+            "/call/icypeas.bulk.results.read",
+            query={"file": file_id},
+            timeout=60,
+        )
+    except Exception:
+        try:
+            res, rmeta = enricher.treg(
+                "POST",
+                "/call/icypeas.bulk.results.read",
+                {"file": file_id},
+                timeout=60,
+            )
+        except Exception as e:
+            print(f"  bulk results failed: {e}", flush=True)
+            return {}
+
+    rc = int(rmeta.get("cost_micro") or 0)
+    enricher.charge(rc)
+    total_cost = start_cost + rc
+    items = []
+    if isinstance(res, list):
+        items = res
+    elif isinstance(res, dict):
+        for k in ("results", "data", "rows", "items"):
+            if isinstance(res.get(k), list):
+                items = res[k]
+                break
+
+    per = total_cost // max(len(keys), 1) if total_cost else 0
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        email = item.get("email") or ""
+        if not email and isinstance(item.get("result"), dict):
+            email = item["result"].get("email") or ""
+        if email and i < len(keys):
+            results_map[keys[i]] = (str(email).strip(), per)
+
+    report.add_bulk_verify(len(rows), total_cost, "icypeas_bulk")
+    if total_cost:
+        report.cost_by_provider["icypeas_bulk"] += total_cost / 1_000_000
+    print(f"  Bulk spill: {len(results_map)}/{len(rows)} emails from icypeas", flush=True)
+    return results_map
 
 
 def enrich_lead_batch(
@@ -471,15 +578,18 @@ def enrich_lead_batch(
     excl_emails: set[str],
     list_id: str,
     report: RunReport,
-    cheap: bool,
+    with_pattern_mv: bool = False,
+    with_icypeas_email: bool = False,
 ) -> list[tuple[dict, dict]]:
-    """Enrich a batch of leads using bulk/concurrent operations."""
+    """Enrich a batch: cache → optional pattern+MV → find-first.
+
+    Icypeas bulk email spill only when with_icypeas_email=True.
+    """
     results: list[tuple[dict, dict]] = []
-    
-    # Step 1: Check Supabase cache for all leads
+
     cache_hits = []
     cache_misses = []
-    
+
     for lead in leads:
         cached = enricher.try_supabase_email_reuse(lead, excl_emails)
         if cached is not None and not cached.get("stopped"):
@@ -495,80 +605,138 @@ def enrich_lead_batch(
                 cache_misses.append(lead)
         else:
             cache_misses.append(lead)
-    
+
     print(f"  Cache: {len(cache_hits)} hits, {len(cache_misses)} misses", flush=True)
     results.extend(cache_hits)
-    
+
     if not cache_misses:
         return results
-    
-    # Step 2: Generate pattern emails for all misses
-    pattern_candidates: dict[str, tuple[dict, str]] = {}  # email -> (lead, pattern)
-    
-    for lead in cache_misses:
-        patterns = enricher.pattern_emails(
-            lead["first_name"],
-            lead["last_name"],
-            lead["domain"]
-        )
-        if patterns:
-            guess = patterns[0]
-            if guess.lower() not in excl_emails:
-                pattern_candidates[guess.lower()] = (lead, guess)
-    
-    if not pattern_candidates:
-        # No pattern candidates, go straight to find
-        return results + enrich_with_find(cache_misses, excl_emails, list_id, report, cheap)
-    
-    print(f"  Pattern candidates: {len(pattern_candidates)}", flush=True)
-    
-    # Step 3: Bulk verify pattern emails
-    if cheap:
-        # ContactOut (free)
-        verify_results = bulk_verify_contactout(list(pattern_candidates.keys()), report)
-        valid_statuses = enricher.VALID_CO
-        catch_all_statuses = enricher.CATCH_ALL_CO
-    else:
-        # MillionVerifier
-        verify_results = bulk_verify_mv(list(pattern_candidates.keys()), report)
-        valid_statuses = enricher.VALID_MV
-        catch_all_statuses = enricher.CATCH_ALL_MV
-    
-    # Step 4: Process verification results
-    pattern_hits = []
-    pattern_misses = []
-    
-    for email_lower, status in verify_results.items():
-        lead, original_email = pattern_candidates[email_lower]
-        
-        if status in valid_statuses:
-            provider = "contactout" if cheap else "millionverifier"
-            source = f"pattern_{provider}"
-            report.add_email(source, 0, None)  # Cost already tracked in bulk_verify
-            pattern_hits.append((
-                lead,
-                {
-                    "email": original_email,
-                    "email_status": status,
-                    "email_source": source,
-                    "spent_note": "0",
-                    "plusvibe_ready": True,
-                    "stopped": False,
-                }
-            ))
-        elif status in catch_all_statuses:
-            # Catch-all needs escalation
-            pattern_misses.append(lead)
+
+    remaining = cache_misses
+
+    # Optional pattern + MV (never ContactOut)
+    if with_pattern_mv:
+        pattern_candidates: dict[str, tuple[dict, str]] = {}
+        for lead in remaining:
+            patterns = enricher.pattern_emails(
+                lead["first_name"], lead["last_name"], lead["domain"]
+            )
+            if patterns:
+                guess = patterns[0]
+                if guess.lower() not in excl_emails:
+                    pattern_candidates[guess.lower()] = (lead, guess)
+        if pattern_candidates:
+            print(f"  Pattern+MV candidates: {len(pattern_candidates)}", flush=True)
+            verify_results = bulk_verify_mv(list(pattern_candidates.keys()), report)
+            pattern_hits = []
+            pattern_misses = []
+            matched_leads = set()
+            for email_lower, status in verify_results.items():
+                lead, original_email = pattern_candidates[email_lower]
+                matched_leads.add(id(lead))
+                if status in enricher.VALID_MV:
+                    report.add_email("pattern_millionverifier", 0, None)
+                    pattern_hits.append(
+                        (
+                            lead,
+                            {
+                                "email": original_email,
+                                "email_status": status,
+                                "email_source": "pattern_mv",
+                                "spent_note": "0",
+                                "plusvibe_ready": True,
+                                "stopped": False,
+                            },
+                        )
+                    )
+                else:
+                    pattern_misses.append(lead)
+            # Leads without pattern stay in miss set
+            for lead in remaining:
+                if id(lead) not in matched_leads:
+                    pattern_misses.append(lead)
+            print(
+                f"  Pattern hits: {len(pattern_hits)}, misses: {len(pattern_misses)}",
+                flush=True,
+            )
+            results.extend(pattern_hits)
+            remaining = pattern_misses
+
+    if remaining:
+        find_results = enrich_with_find(remaining, excl_emails, list_id, report)
+        still_miss: list[dict] = []
+        for lead, result in find_results:
+            if result.get("email") and result.get("plusvibe_ready"):
+                results.append((lead, result))
+            else:
+                still_miss.append(lead)
+                if result.get("email"):
+                    # keep partial but not ready
+                    results.append((lead, result))
+
+        # Opt-in Icypeas bulk spill (excluded from default pull-N email path)
+        if (
+            with_icypeas_email
+            and len(still_miss) >= 100
+            and enricher.under_cap(19000)
+        ):
+            print(f"  Bulk spill for {len(still_miss)} misses...", flush=True)
+            found = bulk_find_icypeas(still_miss, report)
+            recovered = []
+            for lead in still_miss:
+                key = lead.get("linkedin") or (
+                    f"{lead['first_name']}.{lead['last_name']}@{lead['domain']}".lower()
+                )
+                if key in found:
+                    email, cost = found[key]
+                    if email and email.lower() not in excl_emails:
+                        # Verify found bulk emails
+                        try:
+                            mv, mcost = enricher.verify_mv(email)
+                        except Exception:
+                            mv, mcost = "", 0
+                        cost_here = cost + mcost
+                        if mcost:
+                            report.cost_by_provider["millionverifier"] += mcost / 1_000_000
+                        ready = mv in enricher.VALID_MV or mv in enricher.CATCH_ALL_MV or not mv
+                        report.add_email("icypeas_bulk", cost, "icypeas_bulk")
+                        recovered.append(
+                            (
+                                lead,
+                                {
+                                    "email": email,
+                                    "email_status": mv or "bulk",
+                                    "email_source": "icypeas_bulk",
+                                    "spent_note": f"{cost_here/1e6:.4f}",
+                                    "plusvibe_ready": bool(ready and email),
+                                    "stopped": False,
+                                },
+                            )
+                        )
+            # Remove recovered from results if we had empty placeholders; append recovered
+            recovered_ids = {id(l) for l, _ in recovered}
+            results = [(l, r) for l, r in results if id(l) not in recovered_ids]
+            results.extend(recovered)
+            print(f"  Bulk recovered: {len(recovered)}", flush=True)
         else:
-            pattern_misses.append(lead)
-    
-    print(f"  Pattern hits: {len(pattern_hits)}, misses: {len(pattern_misses)}", flush=True)
-    results.extend(pattern_hits)
-    
-    # Step 5: Escalate misses to find services
-    if pattern_misses:
-        results.extend(enrich_with_find(pattern_misses, excl_emails, list_id, report, cheap))
-    
+            # Append non-ready misses as failed rows if not already present
+            present = {id(l) for l, _ in results}
+            for lead in still_miss:
+                if id(lead) not in present:
+                    results.append(
+                        (
+                            lead,
+                            {
+                                "email": None,
+                                "email_status": None,
+                                "email_source": None,
+                                "spent_note": "0",
+                                "plusvibe_ready": False,
+                                "stopped": False,
+                            },
+                        )
+                    )
+
     return results
 
 
@@ -577,144 +745,63 @@ def enrich_with_find(
     excl_emails: set[str],
     list_id: str,
     report: RunReport,
-    cheap: bool,
 ) -> list[tuple[dict, dict]]:
-    """Enrich leads using find services (Blitz, QuickEnrich, Trykitt)."""
+    """Find-first concurrent waterfall: Blitz → QuickEnrich → Trykitt."""
     results: list[tuple[dict, dict]] = []
-    
+
     if not leads:
         return results
-    
-    # Concurrent finds with rate-limit backoff
+
     max_workers = min(32, len(leads))
-    
+
     def find_one(lead: dict) -> tuple[dict, dict]:
-        """Find email for one lead."""
         report.add_concurrent_find()
-        
-        email = ""
-        email_source = ""
-        email_status = ""
-        cost_here = 0
-        
-        # Try Blitz first (cheapest, requires LinkedIn)
-        if lead.get("linkedin") and not cheap:
-            try:
-                if enricher.under_cap(1000):
-                    b_email, bcost = enricher.find_blitz(lead["linkedin"])
-                    cost_here += bcost
-                    if bcost > 0:
-                        report.cost_by_provider["blitz"] += bcost / 1_000_000
-                    if b_email and b_email.lower() not in excl_emails:
-                        email, email_source, email_status = b_email, "blitz", "blitz"
-                        report.add_email("blitz", bcost, "blitz")
-            except urllib.error.HTTPError as e:
-                if e.code == 429:
-                    report.add_rate_limit_hit()
-                    time.sleep(1)
-            except Exception:
-                pass
-        
-        # Try QuickEnrich if no email yet
-        if not email and not cheap and enricher.under_cap(6000):
-            try:
-                qe_email, qcost = enricher.find_quickenrich(
-                    lead["first_name"],
-                    lead["last_name"],
-                    lead["domain"],
-                    lead["linkedin"],
-                )
-                cost_here += qcost
-                if qcost > 0:
-                    report.cost_by_provider["quickenrich"] += qcost / 1_000_000
-                if qe_email and qe_email.lower() not in excl_emails:
-                    # Verify with MV
-                    mv, mcost = enricher.verify_mv(qe_email)
-                    cost_here += mcost
-                    if mcost > 0:
-                        report.cost_by_provider["millionverifier"] += mcost / 1_000_000
-                    if mv in enricher.VALID_MV or mv in enricher.CATCH_ALL_MV:
-                        email = qe_email
-                        email_source = "quickenrich_mv"
-                        email_status = mv
-                        report.add_email("quickenrich", qcost, "quickenrich")
-            except urllib.error.HTTPError as e:
-                if e.code == 429:
-                    report.add_rate_limit_hit()
-                    time.sleep(1.5)
-            except Exception:
-                pass
-        
-        # Try Trykitt as last resort
-        if not email and enricher.under_cap(7000):
-            try:
-                tk_email, tcost = enricher.find_trykitt(
-                    lead["first_name"],
-                    lead["last_name"],
-                    lead["domain"],
-                )
-                cost_here += tcost
-                if tcost > 0:
-                    report.cost_by_provider["trykitt"] += tcost / 1_000_000
-                if tk_email and tk_email.lower() not in excl_emails:
-                    if not cheap:
-                        mv, mcost = enricher.verify_mv(tk_email)
-                        cost_here += mcost
-                        if mcost > 0:
-                            report.cost_by_provider["millionverifier"] += mcost / 1_000_000
-                        email_status = mv or "trykitt"
-                    else:
-                        email_status = "trykitt"
-                    email = tk_email
-                    email_source = "trykitt_mv" if not cheap else "trykitt"
-                    report.add_email("trykitt", tcost, "trykitt")
-            except urllib.error.HTTPError as e:
-                if e.code == 429:
-                    report.add_rate_limit_hit()
-                    time.sleep(2)
-            except Exception:
-                pass
-        
-        ready = bool(
-            email
-            and email.lower() not in excl_emails
-            and (
-                email_status in enricher.VALID_MV
-                or email_status in enricher.CATCH_ALL_MV
-                or email_source in ("blitz", "trykitt")
-            )
-        )
-        
-        return lead, {
-            "email": email or None,
-            "email_status": email_status or None,
-            "email_source": email_source or None,
-            "spent_note": f"{cost_here/1e6:.4f}",
-            "plusvibe_ready": ready,
-            "stopped": False,
-        }
-    
+        # Reuse shared find-first resolver (no ContactOut)
+        return lead, enricher.resolve_email_find_first(lead, excl_emails, blitz_only=False)
+
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(find_one, lead): lead for lead in leads}
         for fut in as_completed(futures):
             lead = futures[fut]
             try:
-                result = fut.result()
-                results.append(result)
+                result_lead, result = fut.result()
+                # Attribute costs roughly from spent_note into providers via source
+                src = (result.get("email_source") or "")
+                try:
+                    cost_micro = int(float(result.get("spent_note") or 0) * 1_000_000)
+                except (TypeError, ValueError):
+                    cost_micro = 0
+                if result.get("email"):
+                    provider = None
+                    if "blitz" in src:
+                        provider = "blitz"
+                    elif "quickenrich" in src:
+                        provider = "quickenrich"
+                    elif "trykitt" in src:
+                        provider = "trykitt"
+                    elif "pattern" in src:
+                        provider = "millionverifier"
+                    report.add_email(src or "find", cost_micro, provider)
+                results.append((result_lead, result))
             except Exception as e:
                 print(f"  ✗ Error finding for {lead.get('domain')}: {e}", flush=True)
-                results.append((lead, {
-                    "email": None,
-                    "email_status": None,
-                    "email_source": None,
-                    "spent_note": "0",
-                    "plusvibe_ready": False,
-                    "stopped": False,
-                }))
-            
+                results.append(
+                    (
+                        lead,
+                        {
+                            "email": None,
+                            "email_status": None,
+                            "email_source": None,
+                            "spent_note": "0",
+                            "plusvibe_ready": False,
+                            "stopped": False,
+                        },
+                    )
+                )
+
             if not enricher.under_cap(500):
                 break
-    
+
     return results
 
 
@@ -722,9 +809,15 @@ def enrich_list(
     list_id: str,
     confirm_spend: float,
     workers: int = 32,
-    cheap: bool = False,
+    with_pattern_mv: bool = False,
+    with_icypeas_email: bool = False,
+    quote: dict | None = None,
 ) -> dict:
-    """Enrich all pending leads in a list using bulk operations."""
+    """Enrich all pending leads using find-first waterfall (no ContactOut).
+
+    Icypeas email / bulk spill is off by default (pull-N model). Pass
+    with_icypeas_email=True only when explicitly requested.
+    """
     # Fetch list and pending leads
     print("Fetching list and pending leads...")
     lst, leads = fetch_list_pending_leads(list_id)
@@ -787,7 +880,8 @@ def enrich_list(
     
     # Initialize enrichment globals
     enricher.TOKEN = enricher.load_treg_token()
-    enricher.CHEAP_MODE = cheap
+    enricher.CHEAP_MODE = False
+    enricher.WITH_PATTERN_MV = with_pattern_mv
     enricher._spent_micro = 0
     enricher._cap_micro = int(confirm_spend * 1_000_000)
     enricher._stop_spend = False
@@ -801,8 +895,9 @@ def enrich_list(
     excl_emails = set()
     
     # Process in batches
+    mode_label = "find-first + pattern-mv" if with_pattern_mv else "find-first (default)"
     print(f"\nStarting enrichment with ${confirm_spend:.2f} cap...")
-    print(f"Mode: {'cheap' if cheap else 'standard'}\n")
+    print(f"Mode: {mode_label} (ContactOut excluded)\n")
     
     batch_size = 100
     enriched = 0
@@ -813,7 +908,14 @@ def enrich_list(
         print(f"Batch {i//batch_size + 1}/{(len(valid_leads) + batch_size - 1)//batch_size} ({len(batch)} leads)")
         
         # Enrich batch
-        batch_results = enrich_lead_batch(batch, excl_emails, list_id, report, cheap)
+        batch_results = enrich_lead_batch(
+            batch,
+            excl_emails,
+            list_id,
+            report,
+            with_pattern_mv=with_pattern_mv,
+            with_icypeas_email=with_icypeas_email,
+        )
         
         # Update leads
         for lead, result in batch_results:
@@ -863,6 +965,15 @@ def enrich_list(
     
     # Generate final report
     final_report = report.to_dict()
+    if quote:
+        final_report["quoted_usd"] = quote.get("expected_usd")
+        final_report["quoted_max_usd"] = quote.get("max_usd")
+        final_report["quoted_cap_usd"] = quote.get("recommended_cap_usd")
+        final_report["quote_variance_usd"] = round(
+            final_report["total_cost_usd"] - float(quote.get("expected_usd") or 0),
+            6,
+        )
+        final_report["quote"] = quote
     
     # Mark list as enriched and save report
     sb_request(
@@ -888,6 +999,11 @@ def enrich_list(
     for provider, cost in sorted(final_report["cost_by_provider"].items()):
         print(f"  {provider:<25} ${cost:.4f}")
     print(f"\nTotal cost: ${final_report['total_cost_usd']:.4f}")
+    if quote:
+        print(
+            f"Quoted expected: ${float(quote.get('expected_usd') or 0):.4f} "
+            f"(variance ${final_report.get('quote_variance_usd', 0):.4f})"
+        )
     print(f"Duration: {final_report['duration_sec']:.1f}s")
     print(f"Throughput: {final_report['throughput_per_min']:.1f} leads/min")
     print(f"{'='*60}\n")
@@ -902,35 +1018,99 @@ def enrich_list(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Enrich a lead list using bulk/batch operations"
+        description="Enrich a lead list using find-first Treg waterfall"
     )
     parser.add_argument("list_id", help="List ID (UUID)")
     parser.add_argument(
         "--confirm-spend",
         type=float,
-        required=True,
-        help="Confirmed spend cap in USD"
+        default=None,
+        help="Confirmed spend cap in USD (required unless --estimate)",
+    )
+    parser.add_argument(
+        "--estimate",
+        action="store_true",
+        help="Catalog quote only (no paid calls)",
     )
     parser.add_argument(
         "--workers",
         type=int,
         default=32,
-        help="Number of parallel workers"
+        help="Number of parallel workers",
+    )
+    parser.add_argument(
+        "--with-pattern-mv",
+        action="store_true",
+        help="Optional: pattern + MillionVerifier before find waterfall",
+    )
+    parser.add_argument(
+        "--with-icypeas-email",
+        action="store_true",
+        help="Opt-in: allow Icypeas bulk email spill (off by default)",
     )
     parser.add_argument(
         "--cheap",
         action="store_true",
-        help="Use cheap mode (pattern → ContactOut → Blitz, no MV/QE/Trykitt)"
+        help=argparse.SUPPRESS,  # deprecated
+    )
+    parser.add_argument(
+        "--refresh-prices",
+        action="store_true",
+        help="Force refresh Treg catalog prices",
     )
 
     args = parser.parse_args()
 
     try:
+        # Pending count for quote (best-effort; estimate mode may lack Supabase)
+        pending = 0
+        try:
+            _, leads = fetch_list_pending_leads(args.list_id)
+            pending = len(leads or [])
+        except Exception as e:
+            if not args.estimate:
+                raise
+            print(f"Warning: could not load list for count ({e})", flush=True)
+
+        quote_obj = treg_pricing.quote_run(
+            mode="enrich",
+            pending_leads=pending or 0,
+            with_pattern_mv=args.with_pattern_mv,
+            force_refresh=args.refresh_prices,
+        )
+        quote_obj.print_table()
+        quote = quote_obj.to_dict()
+
+        if args.estimate:
+            print("\nEstimate only. Re-run with --confirm-spend <usd> to enrich.")
+            print(json.dumps(quote, indent=2))
+            return
+
+        if args.confirm_spend is None:
+            raise SystemExit(
+                "Error: --confirm-spend is required (or pass --estimate). "
+                f"Recommended cap: ${quote_obj.recommended_cap_usd:.2f}"
+            )
+
+        if args.confirm_spend + 1e-9 < quote_obj.expected_usd:
+            raise SystemExit(
+                f"Error: --confirm-spend {args.confirm_spend} below expected "
+                f"${quote_obj.expected_usd:.4f}"
+            )
+
+        if args.cheap:
+            print(
+                "Note: --cheap is deprecated; using find-first (ContactOut excluded).",
+                flush=True,
+            )
+
         results = enrich_list(
             args.list_id,
             args.confirm_spend,
             workers=args.workers,
-            cheap=args.cheap,
+            with_pattern_mv=args.with_pattern_mv,
+            with_icypeas_email=args.with_icypeas_email,
+            quote=quote,
         )
         print("\nFinal results:")
         print(json.dumps(results, indent=2))
