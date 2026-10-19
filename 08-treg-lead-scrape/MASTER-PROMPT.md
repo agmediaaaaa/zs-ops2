@@ -7,7 +7,50 @@
 ```text
 You are running a cost-controlled B2B lead scrape for this repo (zs-ops2).
 
+Your job is ONLY this pipeline. Do the required scrape steps. Do not wander.
+
+================================================================
+OPERATING CONTRACT (READ FIRST)
+================================================================
+
+A. UNDERSTAND → ASK → WAIT
+   After reading the repo files below, STOP and ask me targeting questions.
+   I will tell you who to target. Do NOT invent ICP, verticals, volume, or
+   spend caps. Do NOT start free TAM or paid calls until I answer.
+
+B. STAY ON TASK — NO WANDERING
+   Do only what this scrape requires:
+   - Read repo playbook + load excludes
+   - Ask targeting questions
+   - Free TAM (with my excludes)
+   - Quote cost → ask me for cost cap
+   - Pilot → full (only after my confirms)
+   Do NOT browse Notion, Drive, Slack, Airtable, or unrelated repos “for context.”
+   Do NOT research adjacent topics, rewrite SOPs mid-run, or open side quests.
+
+C. ONE PIPELINE — DO NOT CHANGE COURSE MIDWAY
+   Locked path: Icypeas people.search → (Supabase skip) → Blitz email.find
+                → optional MV → bulk Supabase upload.
+   If yield is bad, filters are wrong, or you want Leadsforge / QuickEnrich /
+   Trykitt / Icypeas email / ContactOut / a different query shape:
+     → STOP. Report the problem. ASK ME. Wait.
+   Do NOT switch providers, broaden filters, drop excludes, or invent a new
+   strategy on your own (that is what burned Mars credits).
+
+D. COST CAP — YOU NEVER SET IT
+   You NEVER create, invent, or self-authorize a spend cap ($1, $2, $10, $14…).
+   You ALWAYS ask: “What hard cost cap should I use? Reply with --confirm-spend <USD>.”
+   No paid call until I send an explicit numeric --confirm-spend.
+
+E. TAM MAP = AFTER MY EXCLUDES
+   Every TAM number you show must use the FULL exclude query I approved
+   (title include+exclude, keyword exclude, domain/website exclude, PlusVibe /
+   existing-lead domains). Never show raw “universe” TAM as the working TAM
+   unless you also show a separate line: TAM after excludes.
+
+================================================================
 ## 0. READ THIS REPO FIRST (NON-NEGOTIABLE)
+================================================================
 
 Before Notion, Google Drive, Slack, Airtable, memory search, or any other MCP:
 
@@ -23,12 +66,14 @@ Before Notion, Google Drive, Slack, Airtable, memory search, or any other MCP:
 2. Do NOT dig Notion / Drive / Slack / Airtable for scrape SOPs, filters, or
    “how we scrape.” Those are distractions. The GitHub repo is the source of truth.
    Only touch PlusVibe / Supabase when you need live exclude lists or upload —
-   and only after the query + cost plan are clear.
+   and only after targeting + cost plan are clear.
 
-3. If something is missing (ICP filters, volume, client code, spend cap), ASK ME.
-   Do not invent spend caps. Do not start paid Treg calls to “figure it out.”
+3. If something is missing (who to target, volume, client, excludes, spend cap),
+   ASK ME. Do not invent. Do not start paid Treg calls to “figure it out.”
 
+================================================================
 ## 1. WHAT TREG IS
+================================================================
 
 Treg (`treg.to`) is a multi-provider API gateway. One token, many backends.
 
@@ -41,13 +86,15 @@ Treg (`treg.to`) is a multi-provider API gateway. One token, many backends.
 We do NOT freestyle paid `/call/` loops. Prefer repo runners with
 `--scope-only`, `--estimate`, and `--confirm-spend`.
 
+================================================================
 ## 2. DEFAULT PATHWAY (LOCKED — CHEAP SCRAPE METHOD)
+================================================================
 
-This is the proven cheap path (~$2–2.5 per 1,000 ready emails when filters are tight):
+This is the ONLY default path (~$2–2.5 per 1,000 ready when filters are tight):
 
 | Stage | Tool | Endpoint | Notes |
 |-------|------|----------|-------|
-| A. Free TAM | Icypeas count | `icypeas.people.search.count` | $0 — always first |
+| A. Free TAM | Icypeas count | `icypeas.people.search.count` | $0 — with FULL excludes |
 | B. Discover | Icypeas people | `icypeas.people.search` | ~$0.00038 / returned row |
 | C. Cost skip | Supabase | Lead Database / cache | Skip known LinkedIn / email / domain |
 | D. Email find | Blitz | `blitzapi.people.email.find` | ~$0.000495 / success; needs LinkedIn |
@@ -56,45 +103,46 @@ This is the proven cheap path (~$2–2.5 per 1,000 ready emails when filters are
 
 ### Email route headers (required on Blitz / find calls)
 
-```
 X-Treg-Route-Max-Cost: 0.01
 X-Treg-Route-Waterfall: 0
 X-Treg-Route-Exclude: aiark,icypeas
-```
 
-### Hard bans (unless I explicitly opt in)
+### Hard bans (unless I explicitly opt in AFTER you ask)
 
-- Do NOT use Icypeas for email find / `icypeas.bulk.search` (use `--with-icypeas-email` only if I ask)
-- Do NOT use AI Ark (`X-Treg-Route-Exclude` must include `aiark`)
-- Do NOT use ContactOut verify for volume (free but 429-bound; wall-clock killer)
-- Do NOT use QuickEnrich / Trykitt / Leadsforge as the default path when LinkedIn + company desc are available from Icypeas
-- Do NOT keep paging until N “ready emails” — Pull-N means pull N people, enrich that batch only
+- Do NOT use Icypeas for email find / `icypeas.bulk.search`
+- Do NOT use AI Ark
+- Do NOT use ContactOut verify for volume
+- Do NOT use QuickEnrich / Trykitt / Leadsforge as a mid-run detour
+- Do NOT keep paging until N “ready emails” — Pull-N = pull N people, enrich that batch only
+- Do NOT change this pathway mid-scrape without asking me first
 
+================================================================
 ## 3. EXCLUSIONS — IN THE INITIAL ICYPEAS QUERY (NOT AFTER)
+================================================================
 
 Icypeas bills per returned row. Post-filtering junk after search = paying for trash.
-Put excludes IN the query before any paid search.
+Put excludes IN the query before any paid search AND before TAM counts.
 
 ### Required in-query excludes
 
 1. **Job title include + exclude**
-   - `currentJobTitle.include` = ICP titles only
+   - `currentJobTitle.include` = ICP titles only (from my answers)
    - `currentJobTitle.exclude` = VP, Vice President, Assistant, Sales, Marketing, HR,
      Engineer, Intern, Student, Retired, Former, Consultant, Advisor, Board Member,
-     and any other junk for this ICP
+     plus any junk titles I specify
    - Keep a free local `TITLE_REJECT_RE` as a safety net only
 
 2. **Domain / company website exclude**
    - `currentCompanyWebsite.exclude` = existing prospect / PlusVibe / client company domains
-   - Load from PlusVibe workspace + Supabase before search
-   - Normalize to bare host (no `https://`, no `www.`)
+   - Load from PlusVibe workspace + Supabase / whatever exclude sources I name
+   - Normalize to bare host (no https://, no www.)
 
 3. **Keyword exclude**
    - `keyword.exclude` = staffing, recruiting, SaaS, software, consulting firm, etc.
-     (campaign-specific)
+     (whatever I specify for this campaign)
 
-4. **Headcount / geo / industry** as required for the ICP
-   - Use flat dotted keys: `currentCompany.headcount` (nested `currentCompany: {headcount}` fails)
+4. **Headcount / geo / industry** as I specify
+   - Use flat dotted keys: `currentCompany.headcount` (nested currentCompany:{headcount} fails)
 
 ### Pre-email skips (free, after search returns)
 
@@ -104,60 +152,79 @@ Put excludes IN the query before any paid search.
 
 ### Suppress vs cost-skip
 
-- Supabase / Lead Database = **cost skip** (don’t pay to re-enrich)
-- PlusVibe = **send suppress** for ready/upload (don’t email people already in the sequencer)
+- Supabase / Lead Database = cost skip (don’t pay to re-enrich)
+- PlusVibe = send suppress for ready/upload
 - Prefer exclude-before-search over suppress-after-spend
 
+================================================================
 ## 4. MANDATORY GATES (STOP AND ASK)
+================================================================
 
-You MUST stop and ask me before any paid find/search beyond free counts.
+### Gate 0 — Ask me who to target (ALWAYS FIRST)
 
-### Gate sequence
+After reading the repo, ask me these (skip any I already answered in the first message):
 
-1. **Clarify (ask me if missing)**
-   - Client code (e.g. ATC, MARS, GWS, ZS)
-   - ICP: titles, geo, headcount, industries, keywords include/exclude
-   - Target: pull N people OR approximate ready volume
-   - Required output fields (default: name, title, employee count, company desc, email, location, LinkedIn, company website)
-   - Where to upload (Supabase list name, PlusVibe campaign?)
+1. Client code (e.g. ATC, MARS, GWS, ZS)?
+2. Who to target: titles, seniority, geo, headcount, industries, keywords include?
+3. What to exclude: titles, keywords, domains, PlusVibe workspace, existing lists?
+4. Target volume: pull N people, or approximate ready count? Pilot size?
+5. Required fields (default: name, title, employee count, company desc, email, location, LinkedIn, company website)?
+6. Upload destination (Supabase list name / PlusVibe campaign)?
 
-2. **Free TAM only**
-   - Run `icypeas.people.search.count` (and company count if needed) with the FULL exclude query
-   - Report TAM table per vertical / segment
-   - If TAM collapses strangely after excludes, tell me — do not drop excludes to “make volume work”
+WAIT for my answers. Then propose the Icypeas query (include + exclude) for approval.
 
-3. **Catalog quote + cost plan**
-   - Use `scripts/treg_pricing.py` and/or runner `--estimate` / `--scope-only`
-   - Never invent flat averages like “$0.003/lead”
-   - Present:
-     - expected_usd
-     - max_usd
-     - recommended_cap_usd (≈ max × 1.4)
-     - estimated $/1k ready (benchmark good path ≈ $2–2.5/1k)
-   - Ask me: **“What hard cost cap should I use? Reply with `--confirm-spend <USD>`.”**
+### Gate 1 — Free TAM WITH excludes (never without)
 
-4. **Pilot first**
-   - Small pull (e.g. 10–25 ready per vertical, or `--pull 50–100`)
-   - Requires my explicit `--confirm-spend <USD>`
-   - Report quote vs actual, ready/pulled, rows-per-ready, email-attempts-per-ready, quality sample
+1. Load my exclude sources (PlusVibe / Supabase / lists I named).
+2. Build the FULL query including title/domain/keyword excludes.
+3. Run `icypeas.people.search.count` with that FULL query ($0).
+4. Present a TAM map like:
 
-5. **Full volume only after new confirm**
-   - New quote + new `--confirm-spend`
-   - Live abort if `sum(X-Treg-Cost-Micro)` would exceed cap
-   - Early-stop if unit economics die:
-     - search rows / ready ≫ ~12
-     - email attempts / ready ≫ ~4
-     - $/1k ready ≫ ~$5–10
-     → STOP, report, ask me. Do not broaden filters into my wallet.
+   | Segment | TAM raw (no domain exclude) | TAM after ALL excludes | Notes |
+   |---------|-----------------------------|------------------------|-------|
+   | V1 …   | …                           | …                      | …     |
+   | TOTAL  | …                           | …                      | …     |
 
-### Spend rules
+5. The number we plan against is **TAM after ALL excludes**.
+6. If TAM collapses oddly after excludes, tell me — do NOT drop excludes to inflate volume.
 
-- “Just run it” / “scrape 2k” is NOT spend approval for full volume
-- Never invent your own $10 / $12 / $14 caps
+### Gate 2 — Catalog quote → ASK ME for the cost cap
+
+1. Use `scripts/treg_pricing.py` and/or runner `--estimate` / `--scope-only`.
+2. Never invent flat averages like “$0.003/lead.”
+3. Present expected_usd, max_usd, estimated $/1k ready (good path ≈ $2–2.5/1k).
+4. You may show a *recommended* range for my decision — but you do NOT set the cap.
+5. ALWAYS ask exactly:
+   “What hard cost cap should I use? Reply with --confirm-spend <USD>.”
+6. STOP. No paid search/find until I reply with `--confirm-spend <USD>`.
+
+### Gate 3 — Pilot first (only after my confirm)
+
+- Small pull (e.g. 10–25 ready per vertical, or `--pull 50–100`)
+- Requires my explicit `--confirm-spend <USD>`
+- Report quote vs actual, ready/pulled, rows-per-ready, email-attempts-per-ready, quality sample
+- If unit economics look bad → STOP and ask; do not switch tools or broaden filters alone
+
+### Gate 4 — Full volume only after a NEW confirm
+
+- New quote + new `--confirm-spend` from me
+- Live abort if sum(X-Treg-Cost-Micro) would exceed MY cap
+- Early-stop if unit economics die:
+  - search rows / ready ≫ ~12
+  - email attempts / ready ≫ ~4
+  - $/1k ready ≫ ~$5–10
+  → STOP, report, ASK ME. Do not broaden filters into my wallet. Do not switch pathway.
+
+### Spend rules (absolute)
+
+- “Just run it” / “scrape 2k” is NOT spend approval and is NOT a cost cap
+- You NEVER invent your own cost cap
 - Shared Treg wallet — check `treg balance` before every paid wave
-- Report spend continuously; abort at hard cap
+- Report spend continuously; abort at MY hard cap
 
+================================================================
 ## 5. PULL-N MODEL (LOCKED)
+================================================================
 
 When I say “100 prospects” / `--pull 100`:
 
@@ -167,9 +234,11 @@ When I say “100 prospects” / `--pull 100`:
 | Enrich that fixed batch only | Page → enrich → page until ready target |
 | Accept whatever emails validate from those 100 | Guarantee 100 emails |
 
-Coverage = `ready / pulled` (ready < pulled is correct).
+Coverage = ready / pulled (ready < pulled is correct).
 
+================================================================
 ## 6. REQUIRED FIELDS
+================================================================
 
 Every ready row must include (unless I waive):
 
@@ -180,61 +249,72 @@ Every ready row must include (unless I waive):
 
 If Icypeas didn’t return a company description, do not silently mark ready and later paid-backfill without asking.
 
+================================================================
 ## 7. UPLOAD / HANDOFF
+================================================================
 
-- Bulk upload to Supabase (Lead Database + `lead_lists` / members). No per-lead upsert loops for 100+.
-- Return: `list_id`, batch_id, ready count, spend, $/1k, coverage, TAM, exclude counts
-- PlusVibe push only if I ask (`--upload-plusvibe` or equivalent)
+- Bulk upload to Supabase (Lead Database + lead_lists / members). No per-lead upsert loops for 100+.
+- Return: list_id, batch_id, ready count, spend, $/1k, coverage, TAM after excludes, exclude counts
+- PlusVibe push only if I ask
 
+================================================================
 ## 8. ALWAYS REPORT
-
-End every scope / pilot / full run with:
+================================================================
 
 | Metric | Meaning |
 |--------|---------|
-| Scope / TAM | Free counts with excludes applied |
+| TAM raw vs TAM after excludes | Both; plan against after-excludes |
+| Exclude counts | Domains / titles / PlusVibe / Supabase skips applied |
 | Quote | Endpoint × volume × unit USD |
 | Pulled | People from Icypeas (= N for pull-N) |
 | Skipped known | Supabase / LI / domain / email skips |
 | PlusVibe excluded | Already in sequencer |
 | Ready | Valid email (+ desc if required) |
 | Coverage | ready / pulled |
-| Path used | Must be Icypeas → Blitz (default) |
-| Spend | Actual vs expected / max / cap |
+| Path used | Must remain Icypeas → Blitz unless I approved a change |
+| Spend | Actual vs expected; cap = MY --confirm-spend only |
 | Variance | actual − quoted_expected |
 | Unit econ | rows/ready, email attempts/ready, $/1k |
 | Handoff | list_id + artifact paths |
 
+================================================================
 ## 9. ANTI-PATTERNS (LEARNED FROM FAILED RUNS)
+================================================================
 
 Banned:
 
 1. Starting in Notion / Airtable / Drive / Slack instead of this GitHub repo
-2. Paid Icypeas search without `currentJobTitle.exclude` + domain exclude in-query
-3. Blitz before LinkedIn/email suppress against existing leads
-4. Spending without my numeric `--confirm-spend`
-5. Switching to Leadsforge / QuickEnrich / Trykitt mid-run without re-quote + re-confirm
-6. Treating free TAM count as enrichment cost or as “people left”
-7. Burning pilot budget on wrong MillionVerifier call format
-8. Broadening filters after tiny yield instead of stopping to ask
-9. Row-by-row Supabase uploads
-10. Marking ready without company description when campaigns need it
+2. Wandering / side research instead of asking me who to target
+3. Inventing ICP, verticals, volume, or a cost cap without asking
+4. Showing TAM without applying my excludes (or treating raw TAM as the plan number)
+5. Paid Icypeas search without currentJobTitle.exclude + domain exclude in-query
+6. Blitz before LinkedIn/email suppress against existing leads
+7. Spending without my numeric --confirm-spend
+8. Changing scrape course mid-run (Leadsforge / QE / Trykitt / new filters) without asking
+9. Dropping excludes to “make TAM bigger”
+10. Burning pilot budget on wrong MillionVerifier call format
+11. Broadening filters after tiny yield instead of stopping to ask
+12. Row-by-row Supabase uploads
+13. Marking ready without company description when campaigns need it
 
 Good reference economics (Cheap Scrape / ATC facility):
 - ~3–5 Icypeas rows per ready
 - ~1.5–2 Blitz attempts per ready
 - ~$2.0–2.5 per 1,000 ready
 
-If you are at ~$35–50/1k or 100+ rows/ready, you are doing it wrong — stop.
+If you are at ~$35–50/1k or 100+ rows/ready, you are doing it wrong — STOP and ask me.
 
-## 10. START NOW
+================================================================
+## 10. START NOW (EXACT ORDER)
+================================================================
 
-1. Confirm you read the repo files in §0
-2. Ask me any missing ICP / volume / client / cap questions
-3. Propose the Icypeas query (include + exclude) for my approval
-4. Run free TAM (`--scope-only` / `.count`) and show the table
-5. Show the cost quote and ask for `--confirm-spend <USD>`
-6. Wait for my confirm before any paid search or email find
+1. Confirm you read the repo files in §0 (one short line).
+2. ASK ME the targeting questions in Gate 0. Then WAIT.
+3. After I answer: propose the Icypeas query (include + exclude) for my approval.
+4. After I approve the query: run free TAM WITH excludes; show raw vs after-excludes TAM map.
+5. Show the cost quote. Ask: “What hard cost cap should I use? Reply with --confirm-spend <USD>.”
+6. WAIT for my --confirm-spend. Do not invent a cap. Do not spend yet.
+7. Run pilot only on the locked Icypeas → Blitz path. Report. Ask before full or any path change.
 ```
 
 ---
@@ -242,12 +322,9 @@ If you are at ~$35–50/1k or 100+ rows/ready, you are doing it wrong — stop.
 ## How to use
 
 1. Open a **new** Cursor cloud/desktop agent on **this repo** (`agmediaaaaa/zs-ops2`).
-2. Paste the fenced prompt above as the first message.
-3. Fill in your ICP in the follow-up (or include it under the paste):
-   - Client, titles, geo, headcount, industries, keywords
-   - Target volume
-   - Any extra domain/title excludes
-4. Wait for free TAM + cost quote, then reply with e.g. `--confirm-spend 2.50` for a pilot.
+2. Paste the fenced prompt above as the first message (alone is fine — the agent will ask who to target).
+3. Answer its targeting questions.
+4. Approve the query → review TAM **after excludes** → set `--confirm-spend <USD>` for the pilot.
 
 ## Companion files (agents must load these)
 
@@ -261,14 +338,12 @@ If you are at ~$35–50/1k or 100+ rows/ready, you are doing it wrong — stop.
 | `scripts/mars_scrape_icypeas.py` | Mars runner with in-query title/domain excludes |
 | `scripts/atc_np_pa_list_builder.py` | ATC reference with PlusVibe suppress |
 
-## One-liner kickoff (after the master prompt is pasted)
+## One-liner (optional — after answering targeting questions)
 
 ```text
-Client: <CODE>
-ICP: US, headcount 5–100, titles <...>, industries/keywords <...>
-Exclude: PlusVibe workspace + existing Lead Database domains/LinkedIns
-Need: name, title, employee count, company desc, email, location
-Target: pilot first (~10–25 ready), then discuss full volume
-Path: Icypeas people.search → Blitz email.find only
-Do free TAM + quote, then ask me for --confirm-spend. Do not spend yet.
+Exclude: PlusVibe workspace + existing Lead Database domains/LinkedIns as discussed
+Path: Icypeas people.search → Blitz email.find only — do not change course without asking
+TAM: show after ALL excludes
+Cost: ask me for --confirm-spend; never invent a cap
+Pilot first, then ask before full volume
 ```

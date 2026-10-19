@@ -16,13 +16,16 @@ Million Verifier, Trykitt, or equivalent). Do not skip because the user is in a 
 
 User-facing master prompt (paste into new chats): `08-treg-lead-scrape/MASTER-PROMPT.md`
 
-## -1. GitHub first (before any other MCP)
+## -1. GitHub first, ask targeting, stay on task
 
 1. Read this skill, `.cursor/rules/lead-scrape.mdc`, `docs/waterfall-cost-matrix.md`,
    and `08-treg-lead-scrape/MASTER-PROMPT.md`.
 2. Do **not** start in Notion / Google Drive / Slack / Airtable / memory search
-   for scrape SOPs or filters. Ask the user if anything is missing.
-3. Use PlusVibe / Supabase only for live exclude lists and upload after the plan is clear.
+   for scrape SOPs or filters. Do not wander — only the scrape pipeline.
+3. **Ask who to target** (client, titles, geo, headcount, industries, keywords,
+   excludes, volume). Wait for answers. Do not invent ICP.
+4. Use PlusVibe / Supabase only for live exclude lists and upload after the plan is clear.
+5. **Do not change course mid-scrape** (provider / filters / pathway) without asking.
 
 ## 0. Pull-N model (locked for all future runs)
 
@@ -56,14 +59,17 @@ Coverage report: `ready / pulled` (expect ready < pulled). That is correct.
 python scripts/atc_np_pa_list_builder.py --pull 100 --confirm-spend 2.50
 ```
 
-## 1. Scope first (free)
+## 1. Scope first (free) — TAM AFTER excludes
 
 Before any paid call:
 
-1. Build the **full** Icypeas query including title/domain/keyword excludes.
-2. Run free people/company **counts** (`icypeas.people.search.count`, etc.).
-3. Present a TAM table: campaign, filters, estimated available rows **with excludes**.
-4. Build a **catalog quote** with endpoint IDs + unit prices (not `$0.003` averages):
+1. Build the **full** Icypeas query including title/domain/keyword excludes the user asked for.
+2. Run free people/company **counts** (`icypeas.people.search.count`, etc.) with that full query.
+3. Present a TAM map with **both** (if useful) but plan only against after-excludes:
+   - TAM raw (optional)
+   - **TAM after ALL excludes** ← the number that matters
+4. Never drop excludes to inflate TAM. Never present raw TAM as the working universe.
+5. Build a **catalog quote** with endpoint IDs + unit prices (not `$0.003` averages):
 
 ```bash
 python scripts/treg_pricing.py --companies 5000 --people 5000 --mode full
@@ -77,19 +83,21 @@ Quote people volume = **pull N**, not assumed ready N.
 
 Then **ask the user** for the hard cost cap. Do not invent one.
 
-## 2. Spend confirm (hard stop)
+## 2. Spend confirm (hard stop) — user owns the cap
 
 1. Print the quote table: stage, endpoint, unit USD, volume, line USD.
-2. Print **expected_usd**, **max_usd**, and **recommended_cap_usd** (max × 1.4).
+2. Print **expected_usd**, **max_usd**, and optionally a *recommended range* for the user’s decision.
 3. Print expected **$/1k ready** (good path ≈ $2–2.5/1k).
 4. **Stop.** Ask: “What hard cost cap should I use? Reply with `--confirm-spend <USD>`.”
-5. Do not call paid find/verify until the user explicitly confirms.
-6. Runner must require `--confirm-spend <usd>` matching/above expected.
-7. Abort if live spend (`X-Treg-Cost-Micro` sum) would exceed the confirmed cap.
-8. Early-stop and ask if rows/ready ≫ ~12, email attempts/ready ≫ ~4, or $/1k ≫ ~$5–10.
+5. You **never** create or self-authorize a cost cap. The user always sets it.
+6. Do not call paid find/verify until the user explicitly confirms with `--confirm-spend`.
+7. Runner must require `--confirm-spend <usd>` matching/above expected.
+8. Abort if live spend (`X-Treg-Cost-Micro` sum) would exceed the user-confirmed cap.
+9. Early-stop and ask if rows/ready ≫ ~12, email attempts/ready ≫ ~4, or $/1k ≫ ~$5–10.
+   Do **not** switch providers or broaden filters without asking.
 
-Never treat “run the plan” / “scrape 2k” alone as spend approval for a **full** volume run.
-Never self-authorize $10–14 caps.
+Never treat “run the plan” / “scrape 2k” alone as spend approval or as a cost cap.
+Never self-authorize $1 / $2 / $10 / $14 caps.
 
 ## 3. Pilot before full
 

@@ -18,7 +18,11 @@ Before Notion, Google Drive, Slack, Airtable, memory search, or other external M
 4. `08-treg-lead-scrape/MASTER-PROMPT.md`
 5. Matching runners under `scripts/`
 
-Do **not** start by searching Notion / Drive / Slack / Airtable for “how we scrape.” Those are distractions. Ask the user if ICP filters, volume, or spend cap are missing.
+Do **not** start by searching Notion / Drive / Slack / Airtable for “how we scrape.” Those are distractions.
+
+**Stay on task.** Do only the scrape pipeline. No wandering / side research.
+
+**Ask first.** After reading repo files, ask who to target (titles, geo, headcount, industries, excludes, volume). Wait. Do not invent ICP or spend.
 
 Paste-ready user prompt: `08-treg-lead-scrape/MASTER-PROMPT.md`
 
@@ -27,17 +31,18 @@ Cost matrix: `docs/waterfall-cost-matrix.md`
 ## Hard rules
 
 1. **Pull-N semantics (locked):** When the user says “100 prospects” (or any N), that means **pull N people from Icypeas people search**, then enrich **that batch only**. Ready emails = whatever validates from those N — do **not** keep paging until N ready emails.
-2. **Staged pipeline (all future runs):**
+2. **Staged pipeline (locked — do not change mid-run):**
    1. Icypeas people search → exactly N candidates (post title/ICP filter) with **in-query** title/domain/keyword excludes
    2. Email find on that batch (Supabase cache first) — **never Icypeas email find / `icypeas.bulk.search`**
    3. MV-verify found emails (concurrent) only after path is proven
    4. Bulk upload to Supabase (desc, loc, etc.)
-3. **Exclusions in the initial Icypeas query:** `currentJobTitle.include` **and** `.exclude`, `keyword.exclude`, `currentCompanyWebsite.exclude` (existing domains). Skip known LinkedIn/email **before** Blitz. Never pay search rows then drop junk in Python as the primary filter.
-4. **Scope first (free):** Run free counts before any paid call. Present TAM **with excludes applied**.
+   If you want Leadsforge / QuickEnrich / Trykitt / different filters: **stop and ask** — never switch course alone.
+3. **Exclusions in the initial Icypeas query:** `currentJobTitle.include` **and** `.exclude`, `keyword.exclude`, `currentCompanyWebsite.exclude` (existing domains). Skip known LinkedIn/email **before** Blitz. Never pay search rows then drop junk in Python as the primary filter. Never drop excludes to inflate TAM.
+4. **Scope first (free):** Run free counts before any paid call. Present TAM **after ALL excludes** (optionally show raw vs after-excludes). Plan against after-excludes only.
 5. **Catalog quote:** Use `scripts/treg_pricing.py` (or `--estimate` / `--scope-only` on runners). Never invent flat averages like `$0.003/lead`.
-6. **Spend confirm:** Stop and **ask** for explicit `--confirm-spend <usd>` (at or above expected) before paid find/verify/search pages. Never invent your own $10–14 caps. “Just run it” / “scrape 2k” is not approval for full volume.
+6. **Spend confirm — user sets the cap:** Stop and **ask** “What hard cost cap should I use? Reply with `--confirm-spend <usd>`.” You **never** invent or self-authorize a cap. “Just run it” / “scrape 2k” is not a cap and not full-volume approval.
 7. **Pilot before full:** Small pilot + quote-vs-actual report before multi-thousand runs. Re-confirm spend for full.
-8. **Early-stop bad unit economics:** If rows/ready ≫ ~12, email attempts/ready ≫ ~4, or $/1k ≫ ~$5–10 → stop, report, ask. Do not broaden filters into the wallet.
+8. **Early-stop bad unit economics:** If rows/ready ≫ ~12, email attempts/ready ≫ ~4, or $/1k ≫ ~$5–10 → stop, report, ask. Do not broaden filters or switch tools into the wallet.
 9. **Use the runners**, not ad-hoc `/call/` loops:
    - Quote: `scripts/treg_pricing.py`
    - Companies: `scripts/discover_companies.py`
