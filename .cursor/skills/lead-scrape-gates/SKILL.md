@@ -17,6 +17,10 @@ Million Verifier, Trykitt, or equivalent). Do not skip because the user is in a 
 
 User-facing master prompt (paste into new chats): `08-treg-lead-scrape/MASTER-PROMPT.md`
 
+**Preferred for paid runs (non-technical / anti-hallucination):**
+`python3 scripts/scrape_wizard.py` — see `08-treg-lead-scrape/HOW-TO-RUN-SAFE.md`
+Runner: `scripts/treg_icypeas_blitz.py` (requires `--confirm-spend`; Icypeas→Blitz only).
+
 ## -1. GitHub first, ask targeting, stay on task
 
 1. Read this skill, `.cursor/rules/lead-scrape.mdc`, `docs/waterfall-cost-matrix.md`,

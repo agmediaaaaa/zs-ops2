@@ -398,10 +398,13 @@ If you are at ~$35–50/1k or 100+ rows/ready, you are doing it wrong — STOP a
 
 ## How to use
 
-1. Open a **new** Cursor cloud/desktop agent on **this repo** (`agmediaaaaa/zs-ops2`).
-2. Paste the fenced prompt above as the first message (alone is fine — the agent will ask who to target).
-3. Answer its targeting questions.
-4. Approve the query → review TAM **after excludes** → set `--confirm-spend <USD>` for the pilot.
+**Preferred (less hallucination risk):** run the terminal wizard — see `08-treg-lead-scrape/HOW-TO-RUN-SAFE.md`
+
+```bash
+python3 scripts/scrape_wizard.py
+```
+
+**Or chat for planning only:** paste the fenced prompt above into a new agent on this repo. The agent should ask targeting questions, then hand you wizard / runner commands with `--confirm-spend` — it must not invent a spend cap or freestyle paid `/call/` loops.
 
 ## Companion files (agents must load these)
 
