@@ -66,14 +66,15 @@ ICY_INDUSTRIES = [
     "Physicians",
 ]
 
+# Broader keyword set (proven ATC yield); post-filters still drop noise.
 KEYWORDS = [
     "urgent care",
     "walk-in clinic",
-    "primary care practice",
+    "primary care",
     "family practice",
     "family medicine",
     "internal medicine",
-    "pediatric practice",
+    "pediatrics",
     "concierge medicine",
     "direct primary care",
     "house calls",
@@ -92,16 +93,16 @@ KEYWORDS = [
     "OB/GYN",
     "pain management",
     "interventional pain",
+    "orthopedics",
     "orthopedic",
     "cardiology",
-    "GI practice",
     "gastroenterology",
     "wound care",
     "outpatient psychiatry",
     "psychiatric practice",
     "psychiatric nurse practitioner",
-    "ketamine clinic",
-    "TMS therapy",
+    "ketamine",
+    "TMS",
     "Suboxone",
     "medication-assisted treatment",
     "addiction treatment",
@@ -113,19 +114,6 @@ KEYWORD_EXCLUDE = [
     "hospital",
     "hospitals",
     "health system",
-    "staffing",
-    "insurance",
-    "pharma",
-    "biotech",
-    "medical device",
-    "laboratory",
-    "nursing home",
-    "nonprofit",
-    "software",
-    "SaaS",
-    "wellness",
-    "fitness",
-    "alternative medicine",
 ]
 EXCLUDE_COMPANIES = [
     "TeamHealth",
@@ -413,23 +401,49 @@ def load_plusvibe_suppress(ws: str) -> set[str]:
     if not key:
         print("plusvibe_skip: no API key", flush=True)
         return out
-    # Best-effort; ignore failures
+    cache = OUT_DIR / f"plusvibe_suppress_{ws}.json"
+    if cache.exists():
+        try:
+            data = json.loads(cache.read_text())
+            out = set(data)
+            print(f"plusvibe_suppress={len(out)} (cached)", flush=True)
+            return out
+        except Exception:
+            pass
     try:
-        url = f"{PLUSVIBE_API}/leads/export?workspace_id={ws}&limit=50000"
-        req = urllib.request.Request(
-            url,
-            headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            data = json.loads(resp.read().decode())
-        rows = data if isinstance(data, list) else (data.get("data") or data.get("leads") or [])
-        for r in rows:
-            em = (r.get("email") or "").strip().lower()
-            if em:
-                out.add(em)
-            li = normalize_linkedin(r.get("linkedin") or r.get("linkedin_url") or "")
-            if li:
-                out.add(f"li:{li}")
+        page = 1
+        page_size = 100
+        while page <= 200:
+            url = (
+                f"{PLUSVIBE_API}/lead/workspace-leads?workspace_id={ws}"
+                f"&limit={page_size}&page={page}"
+            )
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "x-api-key": key,
+                    "Accept": "application/json",
+                    "User-Agent": "zs-ops2-atc-v3/1.0",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                rows = json.loads(resp.read().decode() or "[]")
+            if not isinstance(rows, list) or not rows:
+                break
+            for r in rows:
+                em = (r.get("email") or "").strip().lower()
+                if em:
+                    out.add(em)
+                li = normalize_linkedin(r.get("linkedin_person_url") or "")
+                if li:
+                    out.add(f"li:{li}")
+            if len(rows) < page_size:
+                break
+            page += 1
+            if page % 25 == 0:
+                print(f"  plusvibe page={page} suppress={len(out)}", flush=True)
+            time.sleep(0.03)
+        cache.write_text(json.dumps(sorted(out)))
         print(f"plusvibe_suppress={len(out)}", flush=True)
     except Exception as e:
         print(f"plusvibe_warn: {e}", flush=True)
@@ -437,23 +451,67 @@ def load_plusvibe_suppress(ws: str) -> set[str]:
 
 
 def sb_known_emails_linkedin() -> tuple[set[str], set[str]]:
-    """Cost-skip: known emails + linkedin slugs already in Lead Database (sample via recent ATC lists)."""
+    """Cost-skip: emails + LinkedIn URLs already on ATC lead lists."""
     emails: set[str] = set()
     lis: set[str] = set()
     try:
-        # Pull prior ATC list members' emails via a broad email select is expensive;
-        # instead load emails that match healthcare domains from a limited window is hard.
-        # Use lead_lists metadata for ATC and member join is not available via simple REST.
-        # Fallback: empty — Blitz is cheap; PlusVibe handles send suppress.
         lists = (
             sb_request(
                 "GET",
                 "lead_lists",
-                query={"client": "eq.ATC", "select": "list_id,list_name", "limit": "20"},
+                query={"client": "eq.ATC", "select": "list_id,list_name,ready_count", "limit": "50"},
             )
             or []
         )
         print(f"prior_atc_lists={len(lists)}", flush=True)
+        for lst in lists:
+            lid = lst.get("list_id")
+            if not lid:
+                continue
+            # Page members → Lead Database rows
+            offset = 0
+            while offset < 5000:
+                members = (
+                    sb_request(
+                        "GET",
+                        "lead_list_members",
+                        query={
+                            "list_id": f"eq.{lid}",
+                            "select": "lead_id",
+                            "limit": "200",
+                            "offset": str(offset),
+                        },
+                    )
+                    or []
+                )
+                if not members:
+                    break
+                ids = [str(m["lead_id"]) for m in members if m.get("lead_id") is not None]
+                # Fetch in chunks of 50 via id=in.(...)
+                for i in range(0, len(ids), 50):
+                    chunk = ids[i : i + 50]
+                    rows = (
+                        sb_request(
+                            "GET",
+                            "Lead Database",
+                            query={
+                                "id": f"in.({','.join(chunk)})",
+                                "select": "Email,Linkedin",
+                            },
+                        )
+                        or []
+                    )
+                    for r in rows:
+                        em = (r.get("Email") or "").strip().lower()
+                        if em:
+                            emails.add(em)
+                        li = normalize_linkedin(r.get("Linkedin") or "")
+                        if li:
+                            lis.add(li)
+                offset += len(members)
+                if len(members) < 200:
+                    break
+        print(f"sb_skip emails={len(emails)} linkedins={len(lis)}", flush=True)
     except Exception as e:
         print(f"sb_known_warn: {e}", flush=True)
     return emails, lis
@@ -679,10 +737,12 @@ def run(mode: str, confirm_spend: float, ready_target: int) -> dict:
         print(f"  {b['id']}: {tam[b['id']]:,}", flush=True)
 
     pv = load_plusvibe_suppress(PLUSVIBE_WS)
-    sb_known_emails_linkedin()
+    known_emails, known_lis = sb_known_emails_linkedin()
+    seen_li |= known_lis
+    seen_email |= known_emails
+    skipped_known = 0
 
     # Allocate ready targets per band; ops band is thin so take all available share
-    remaining = ready_target
     targets: dict[str, int] = {}
     for b in BANDS:
         share = int(round(ready_target * b["ready_share"]))
@@ -698,7 +758,7 @@ def run(mode: str, confirm_spend: float, ready_target: int) -> dict:
         company_counts: dict[str, int] = {}
         band_stats[b["id"]] = {"ready": 0, "searched": 0, "pages": 0, "tam": tam[b["id"]]}
         print(f"\n--- {b['id']} need={need} ---", flush=True)
-        while got < need and pages < 120:
+        while got < need and pages < 200:
             if spend_micro / 1e6 >= confirm_spend * 0.98:
                 print("near_cap_stop", flush=True)
                 break
@@ -737,8 +797,9 @@ def run(mode: str, confirm_spend: float, ready_target: int) -> dict:
                 dom = lead["domain"]
                 company_counts[dom] = company_counts.get(dom, 0) + 1
 
-                if f"li:{li}" in pv:
-                    skipped_pv += 1
+                if f"li:{li}" in pv or li in known_lis:
+                    skipped_pv += 1 if f"li:{li}" in pv else 0
+                    skipped_known += 1 if li in known_lis else 0
                     seen_li.add(li)
                     continue
 
@@ -755,8 +816,11 @@ def run(mode: str, confirm_spend: float, ready_target: int) -> dict:
                 seen_li.add(li)
                 if not email:
                     continue
-                if email in seen_email or email in pv:
-                    skipped_pv += 1 if email in pv else skipped_dup
+                if email in seen_email or email in pv or email in known_emails:
+                    if email in pv:
+                        skipped_pv += 1
+                    else:
+                        skipped_dup += 1
                     continue
                 email_hits += 1
                 seen_email.add(email)
@@ -779,8 +843,6 @@ def run(mode: str, confirm_spend: float, ready_target: int) -> dict:
             if not leads or not token:
                 break
             time.sleep(0.05)
-        remaining = ready_target - len(ready_rows)
-        # Roll leftover need into next band naturally via remaining target math
         print(
             f"band_done {b['id']} ready={got} spend=${spend_micro/1e6:.4f}",
             flush=True,
@@ -834,6 +896,7 @@ def run(mode: str, confirm_spend: float, ready_target: int) -> dict:
                         "email_status": "unverified",
                     }
                 )
+                band_stats[b["id"]]["ready"] = band_stats[b["id"]].get("ready", 0) + 1
                 if len(ready_rows) % 25 == 0:
                     print(
                         f"  topup ready={len(ready_rows)} spend=${spend_micro/1e6:.4f}",
@@ -893,6 +956,7 @@ def run(mode: str, confirm_spend: float, ready_target: int) -> dict:
         "email_hit_rate": round(email_hits / email_attempts, 4) if email_attempts else 0,
         "skipped_plusvibe": skipped_pv,
         "skipped_dup": skipped_dup,
+        "skipped_known_supabase": skipped_known,
         "spend_usd": round(actual, 6),
         "cap_usd": confirm_spend,
         "cost_per_ready": round(actual / len(ready_rows), 6) if ready_rows else None,
