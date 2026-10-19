@@ -37,11 +37,14 @@ from urllib.parse import urlparse
 # changing HARD_SPEND_CAP_USD after user approval.
 HARD_SPEND_CAP_USD = 2.00  # user-authorized hard cap for this run
 
-# Abort a stream / run early when unit economics go bad (avoid tail spend for tiny yield).
-MAX_SEARCH_ROWS_PER_READY = 12   # Cheap Scrape ~3–5; stop paging well before 12
-MAX_EMAIL_ATTEMPTS_PER_READY = 4  # Cheap Scrape ~1.5–2; stop emailing past 4
-MIN_CAND_YIELD = 0.04             # candidates / searched rows; below this after 2 pages → stop
-RESERVE_USD = 0.05                # leave buffer; do not start new work under this remaining
+# Abort a stream / run early when unit economics go bad (avoid burning budget on a dead pool).
+# Thresholds are looser than Cheap Scrape averages so a cold streak does not kill a stream
+# before Blitz has a fair shot (~40–60% hit rate ⇒ 10 misses in a row is still plausible).
+MAX_SEARCH_ROWS_PER_READY = 15
+MAX_EMAIL_ATTEMPTS_PER_READY = 5
+MIN_CAND_YIELD = 0.015            # after ≥150 rows; thin leftover TAM after PV suppress
+RESERVE_USD = 0.04                # leave buffer; do not start new work under this remaining
+MAX_STREAM_SPEND_ZERO_READY = 0.22  # if a stream spends this with 0 ready, move on
 
 
 TOKEN = (
@@ -805,12 +808,17 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
         abort_reason = ""
 
         # Keep search spend tight: don't page the entire TAM when want is inflated.
-        cand_goal = min(max(want * 2, 20), 80)
-        max_pages = 8  # <= 400 search rows / stream
+        cand_goal = min(max(want * 2, 30), 100)
+        max_pages = 10  # <= 500 search rows / stream
         q = with_website_excludes(s["query"], site_excl)
         while pages < max_pages and len(candidates) < cand_goal:
             if hard_cap - spend_micro / 1e6 <= RESERVE_USD:
                 abort_reason = "reserve"
+                break
+            stream_spend_so_far = (spend_micro - stream_start_micro) / 1e6
+            if stream_spend_so_far >= MAX_STREAM_SPEND_ZERO_READY and not candidates:
+                abort_reason = f"stream_spend_no_cands=${stream_spend_so_far:.3f}"
+                print(f"  search abort: {abort_reason}")
                 break
             body: dict = {"query": q, "pagination": {"size": 50}}
             if token:
@@ -842,16 +850,18 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
                 li = norm_linkedin(L.get("profileUrl") or "")
                 if not li or li in seen_li:
                     continue
+                # Batch + prior-ready domain dedupe only (not full PV domain kill on person filter —
+                # websites are already in-query excluded via site_excl).
                 dom = norm_domain(L.get("lastCompanyWebsite") or "")
-                if dom and (dom in seen_domain or dom in excl["domains"]):
+                if dom and dom in seen_domain:
                     continue
                 candidates.append(L)
                 if len(candidates) >= cand_goal:
                     break
-            # Early abort: bad candidate yield after enough pages — don't keep paying for junk
-            if pages >= 2 and searched >= 80:
+            # Early abort: near-zero candidate yield after enough pages
+            if pages >= 3 and searched >= 150:
                 yield_rate = len(candidates) / max(searched, 1)
-                if yield_rate < MIN_CAND_YIELD:
+                if yield_rate < MIN_CAND_YIELD and len(candidates) < 5:
                     abort_reason = f"low_cand_yield={yield_rate:.3f}"
                     print(
                         f"  search abort: {abort_reason} "
@@ -865,24 +875,30 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
 
         ready_here: list[dict] = []
         attempts = hits = pv_skip = freemail_skip = mv_fail = 0
-        miss_streak = 0
+        blitz_miss_streak = 0
         for L in candidates:
             if len(ready_here) >= want or len(rows) >= ready_target:
                 break
             if hard_cap - spend_micro / 1e6 <= RESERVE_USD:
                 abort_reason = abort_reason or "reserve"
                 break
-            # Stop emailing if attempts/ready blows past Cheap Scrape range
+            stream_spend_so_far = (spend_micro - stream_start_micro) / 1e6
+            if not ready_here and stream_spend_so_far >= MAX_STREAM_SPEND_ZERO_READY:
+                abort_reason = f"stream_spend_zero_ready=${stream_spend_so_far:.3f}"
+                print(f"  email abort: {abort_reason}")
+                break
+            # Stop emailing if attempts/ready blows past Cheap Scrape range (after a few ready)
             if ready_here and attempts / max(len(ready_here), 1) > MAX_EMAIL_ATTEMPTS_PER_READY:
                 abort_reason = f"email_attempts_per_ready={attempts/len(ready_here):.1f}"
                 print(f"  email abort: {abort_reason}")
                 break
-            if not ready_here and attempts >= 12:
-                abort_reason = "no_email_hits_after_12"
+            if not ready_here and attempts >= 35:
+                abort_reason = "no_ready_after_35_attempts"
                 print(f"  email abort: {abort_reason}")
                 break
-            if miss_streak >= 10 and len(ready_here) < 3:
-                abort_reason = f"miss_streak={miss_streak}"
+            # Only count true Blitz misses toward streak (not PV/freemail skips)
+            if blitz_miss_streak >= 20 and len(ready_here) < 2:
+                abort_reason = f"blitz_miss_streak={blitz_miss_streak}"
                 print(f"  email abort: {abort_reason}")
                 break
             li = norm_linkedin(L.get("profileUrl") or "")
@@ -897,22 +913,20 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
                 break
             email = extract_email(eout)
             if not email or "@" not in email:
-                miss_streak += 1
+                blitz_miss_streak += 1
                 time.sleep(0.05)
                 continue
             hits += 1
+            blitz_miss_streak = 0
             domain = email.split("@", 1)[1]
             if domain in FREEMAIL:
                 freemail_skip += 1
-                miss_streak += 1
                 continue
             if email in seen_email:
                 pv_skip += 1
-                miss_streak += 1
                 continue
             if domain in seen_domain:
                 pv_skip += 1
-                miss_streak += 1
                 continue
 
             mv_status = "unverified"
@@ -927,7 +941,6 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
                     mv_status = str(mv.get("result") or "").lower()
                     if mv_status not in MV_VALID:
                         mv_fail += 1
-                        miss_streak += 1
                         time.sleep(0.05)
                         continue
                 except RuntimeError as e:
@@ -937,7 +950,6 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
                 except urllib.error.HTTPError as e:
                     print(f"  mv http {e.code}, skipping email")
                     mv_fail += 1
-                    miss_streak += 1
                     time.sleep(0.05)
                     continue
 
@@ -965,7 +977,6 @@ def run(ready_target: int, hard_cap: float, verify: bool, upload: bool, broad: b
             seen_email.add(email)
             if domain:
                 seen_domain.add(domain)
-            miss_streak = 0
             print(
                 f"  ✓ [{len(rows)}/{ready_target}] {row['name']} <{email}> "
                 f"| {row['job_title']} @ {row['company_name']}"
