@@ -1,0 +1,109 @@
+{
+  "batch_id": "gws-pilot-20261017-172238-9b8b15fa",
+  "mode": "pilot",
+  "confirm_spend_usd": 3.0,
+  "start_balance_usd": 9.92,
+  "campaigns": {
+    "A1": {
+      "searched": 18,
+      "skipped_known": 0,
+      "plusvibe_excluded": 0,
+      "ready": 10,
+      "found_total": 18,
+      "spent_usd": 0.0,
+      "coverage": 0.5556
+    },
+    "A2": {
+      "searched": 12,
+      "skipped_known": 0,
+      "plusvibe_excluded": 0,
+      "ready": 10,
+      "found_total": 12,
+      "spent_usd": 0.062912,
+      "coverage": 0.8333
+    },
+    "A3": {
+      "searched": 16,
+      "skipped_known": 0,
+      "plusvibe_excluded": 0,
+      "ready": 10,
+      "found_total": 16,
+      "spent_usd": 0.067074,
+      "coverage": 0.625
+    },
+    "A4": {
+      "searched": 18,
+      "skipped_known": 0,
+      "plusvibe_excluded": 1,
+      "ready": 10,
+      "found_total": 18,
+      "spent_usd": 0.071472,
+      "coverage": 0.5556
+    },
+    "A5": {
+      "searched": 16,
+      "skipped_known": 0,
+      "plusvibe_excluded": 0,
+      "ready": 10,
+      "found_total": 16,
+      "spent_usd": 0.066132,
+      "coverage": 0.625
+    },
+    "B1": {
+      "searched": 13,
+      "skipped_known": 0,
+      "plusvibe_excluded": 0,
+      "ready": 10,
+      "found_total": 13,
+      "spent_usd": 0.061298,
+      "coverage": 0.7692
+    },
+    "B2": {
+      "searched": 13,
+      "skipped_known": 0,
+      "plusvibe_excluded": 0,
+      "ready": 10,
+      "found_total": 13,
+      "spent_usd": 0.060966,
+      "coverage": 0.7692
+    },
+    "C": {
+      "searched": 14,
+      "skipped_known": 0,
+      "plusvibe_excluded": 0,
+      "ready": 10,
+      "found_total": 14,
+      "spent_usd": 0.06163,
+      "coverage": 0.7143
+    }
+  },
+  "db_order": [
+    "leadsforge.people.search"
+  ],
+  "email_order": [
+    "extract_or_trykitt.people.email.find",
+    "millionverifier.people.email.verify"
+  ],
+  "end_balance_usd": 9.47,
+  "spent_usd": 0.451484,
+  "spent_from_balance_usd": 0.45,
+  "ready_total": 80,
+  "searched_total": 120,
+  "coverage_overall": 0.6667,
+  "artifacts": {
+    "jsonl": "/workspace/artifacts/gws-pilot/gws-pilot-20261017-172238-9b8b15fa.jsonl",
+    "all_csv": "/workspace/artifacts/gws-pilot/gws-pilot-20261017-172238-9b8b15fa_apollo.csv",
+    "ready_csv": "/workspace/artifacts/gws-pilot/gws-pilot-20261017-172238-9b8b15fa_ready.csv"
+  },
+  "sheet": {
+    "file_id": "1tqLmo4vm8CIyQo3x-kJY2hiUvYxTvBbIQhcFPEplH_I",
+    "url": "https://docs.google.com/spreadsheets/d/1tqLmo4vm8CIyQo3x-kJY2hiUvYxTvBbIQhcFPEplH_I/edit",
+    "title": "GWS Pilot 2026-10-17 All Found (batch gws-pilot-20261017-172238-9b8b15fa)",
+    "rows": 120
+  },
+  "handoff": {
+    "supabase_batch_id": "gws-pilot-20261017-172238-9b8b15fa",
+    "handoff_status": "sheet",
+    "zs_pipeline_os": "404/not accessible to agent token; use Sheet + pipeline_leads"
+  }
+}
