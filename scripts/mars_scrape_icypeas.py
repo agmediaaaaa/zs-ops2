@@ -96,6 +96,45 @@ SHARED_KEYWORD_EXCLUDE = [
     "government",
 ]
 
+# Pushed into Icypeas currentJobTitle.exclude BEFORE search (billed per row).
+# Post-search TITLE_REJECT_RE stays as a free safety net for fuzzy matches.
+TITLE_EXCLUDE = [
+    "VP",
+    "Vice President",
+    "Assistant",
+    "Sales",
+    "Marketing",
+    "Human Resources",
+    "HR",
+    "Engineer",
+    "Engineering",
+    "Quality",
+    "Purchasing",
+    "Supply Chain",
+    "Machinist",
+    "Welder",
+    "Operator",
+    "Technician",
+    "Shop Floor",
+    "Accounting",
+    "Accountant",
+    "Administrative",
+    "Administrator",
+    "Project Manager",
+    "Product Manager",
+    "CFO",
+    "CTO",
+    "CMO",
+    "CIO",
+    "Board Member",
+    "Advisor",
+    "Consultant",
+    "Retired",
+    "Former",
+    "Intern",
+    "Student",
+]
+
 TITLE_REJECT_RE = re.compile(
     r"("
     r"\bvp\b|vice[\s-]?president|assistant|"
@@ -394,7 +433,12 @@ def _streams(broad: bool = False) -> list[dict]:
                     "emp_lo": lo,
                     "emp_hi": hi,
                     "query": {
-                        "currentJobTitle": {"include": titles},
+                        # Include only ICP titles; exclude junk titles in-query so we
+                        # do not pay for VP/Sales/HR/etc. rows Icypeas would otherwise return.
+                        "currentJobTitle": {
+                            "include": titles,
+                            "exclude": TITLE_EXCLUDE,
+                        },
                         "profileLocation": {"include": ["US"]},
                         "currentCompany.headcount": {">=": lo, "<=": hi},
                         "currentCompany.type": {"include": ["Privately Held", "Partnership"]},
@@ -426,9 +470,12 @@ def website_exclude_list(domains: set[str] | list[str]) -> list[str]:
 def with_website_excludes(query: dict, domains: list[str]) -> dict:
     """Inject company-website excludes into the Icypeas query BEFORE search.
 
-    Icypeas bills per returned row — excluding known domains in-query avoids
-    paying for companies already in PlusVibe. LinkedIn profile URLs are NOT a
-    valid Icypeas query key; those are skipped post-search / pre-email (free).
+    Icypeas bills per returned row — exclude in-query wherever possible:
+      - currentJobTitle.include / .exclude  (set on stream queries)
+      - currentCompanyWebsite.exclude       (PlusVibe company domains here)
+      - keyword.exclude                     (set on stream queries)
+    LinkedIn profileUrl is NOT a valid Icypeas people.search filter; those
+    people are skipped post-search / pre-Blitz (free — no email spend).
     """
     q = json.loads(json.dumps(query))  # deep copy
     if domains:
