@@ -50,10 +50,29 @@ TITLES = [
     "Principal",
 ]
 
+TITLE_EXCLUDE = [
+    "VP",
+    "Vice President",
+    "Assistant",
+    "Sales",
+    "Marketing",
+    "HR",
+    "Engineer",
+    "Intern",
+    "Student",
+    "Retired",
+    "Former",
+    "Consultant",
+    "Advisor",
+    "Board Member",
+    "Director of Sales",
+    "Account Executive",
+]
+
 
 def _base_query(**extra) -> dict:
     q = {
-        "currentJobTitle": {"include": TITLES},
+        "currentJobTitle": {"include": TITLES, "exclude": TITLE_EXCLUDE},
         "profileLocation": {"include": ["US"]},
         "currentCompany.headcount": {">=": 5, "<=": 100},
     }
@@ -226,7 +245,7 @@ def call(endpoint: str, body: dict | None = None) -> tuple[dict, int]:
     if "email.find" in endpoint:
         hdrs["X-Treg-Route-Max-Cost"] = "0.01"
         hdrs["X-Treg-Route-Waterfall"] = "0"
-        hdrs["X-Treg-Route-Exclude"] = "aiark"
+        hdrs["X-Treg-Route-Exclude"] = "aiark,icypeas"
     req = urllib.request.Request(
         f"https://treg.to/call/{endpoint}", data=data, method="POST" if body is not None else "GET", headers=hdrs
     )
