@@ -86,12 +86,17 @@ def ask_int(prompt: str, default: int | None = None) -> int:
 
 def clean_token(raw: str) -> str:
     """Strip quotes, arrows, and terminal junk from a single filter value."""
-    s = "".join(c for c in (raw or "") if c.isprintable())
+    s = "".join(c for c in (raw or "") if c.isprintable() and ord(c) >= 32)
     s = s.strip()
     # remove wrapping quotes users often paste: "CEO" or 'CEO'
     if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
         s = s[1:-1].strip()
     s = s.strip('"').strip("'").strip()
+    # broken paste like: training"[A  or InsurTech"
+    if s.count('"') == 1:
+        s = s.split('"', 1)[0].strip()
+    if s.count("'") == 1:
+        s = s.split("'", 1)[0].strip()
     return s
 
 

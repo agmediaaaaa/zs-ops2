@@ -174,10 +174,15 @@ def website_exclude_list(domains: set[str] | list[str]) -> list[str]:
 
 
 def clean_token(raw: str) -> str:
-    s = "".join(c for c in (raw or "") if c.isprintable()).strip()
+    s = "".join(c for c in (raw or "") if c.isprintable() and ord(c) >= 32).strip()
     if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
         s = s[1:-1].strip()
-    return s.strip('"').strip("'").strip()
+    s = s.strip('"').strip("'").strip()
+    if s.count('"') == 1:
+        s = s.split('"', 1)[0].strip()
+    if s.count("'") == 1:
+        s = s.split("'", 1)[0].strip()
+    return s
 
 
 def clean_list(vals: list | None) -> list[str]:
