@@ -84,12 +84,63 @@ def ask_int(prompt: str, default: int | None = None) -> int:
             print("  Enter a whole number like 100")
 
 
+def clean_token(raw: str) -> str:
+    """Strip quotes, arrows, and terminal junk from a single filter value."""
+    s = "".join(c for c in (raw or "") if c.isprintable())
+    s = s.strip()
+    # remove wrapping quotes users often paste: "CEO" or 'CEO'
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+        s = s[1:-1].strip()
+    s = s.strip('"').strip("'").strip()
+    return s
+
+
 def split_pipe_or_comma(raw: str) -> list[str]:
     if "|" in raw:
         parts = raw.split("|")
     else:
         parts = raw.split(",")
-    return [p.strip() for p in parts if p.strip()]
+    out: list[str] = []
+    seen: set[str] = set()
+    for p in parts:
+        s = clean_token(p)
+        if not s:
+            continue
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
+
+
+def normalize_geo(geos: list[str]) -> list[str]:
+    """Icypeas profileLocation wants country codes like US — 'us' nearly zeros TAM."""
+    out: list[str] = []
+    for g in geos:
+        s = clean_token(g)
+        if not s:
+            continue
+        # common country codes / aliases
+        aliases = {
+            "usa": "US",
+            "u.s.": "US",
+            "u.s.a.": "US",
+            "united states": "US",
+            "united states of america": "US",
+            "america": "US",
+            "uk": "GB",
+            "great britain": "GB",
+            "england": "GB",
+        }
+        low = s.lower()
+        if low in aliases:
+            out.append(aliases[low])
+        elif len(s) == 2:
+            out.append(s.upper())
+        else:
+            out.append(s)
+    return out or ["US"]
 
 
 def run_cmd(args: list[str]) -> int:
@@ -132,7 +183,8 @@ path mid-run. It only does: Icypeas people search → Blitz.
         ask("Titles exclude", DEFAULT_TITLE_EXCLUDE.replace("|", ", "))
     )
 
-    geo = split_pipe_or_comma(ask("Location / geo", "US"))
+    geo = normalize_geo(split_pipe_or_comma(ask("Location / geo (use US not us)", "US")))
+    print(f"  Using geo: {', '.join(geo)}")
     hc_min = ask_int("Company headcount minimum", 5)
     hc_max = ask_int("Company headcount maximum", 100)
 
@@ -170,6 +222,20 @@ KEYWORDS — go into the Icypeas query (keyword.include / keyword.exclude).
         if not ask_yes("Continue without industry/keyword filters?", True):
             print("Stopped. Re-run and add industries and/or keywords.")
             return
+
+    if ind_inc and kw_inc:
+        print(
+            "\n  IMPORTANT: Icypeas ANDs industry include + keyword include together.\n"
+            "  That often makes TAM tiny (e.g. Manufacturing + CNC → hundreds, not thousands).\n"
+            "  For a broader TAM, use ONE of: industries include, OR keywords include — not both.\n"
+            "  Excludes (industry/keyword exclude) are safer to combine."
+        )
+        if not ask_yes("Keep both industry include AND keyword include?", False):
+            if ask_yes("Drop keyword includes (keep industries)?", True):
+                kw_inc = []
+            else:
+                ind_inc = []
+            print(f"  Now: industries include={ind_inc or '(none)'} | keywords include={kw_inc or '(none)'}")
 
     print(
         """

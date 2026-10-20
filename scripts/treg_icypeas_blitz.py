@@ -173,12 +173,58 @@ def website_exclude_list(domains: set[str] | list[str]) -> list[str]:
     return out
 
 
+def clean_token(raw: str) -> str:
+    s = "".join(c for c in (raw or "") if c.isprintable()).strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+        s = s[1:-1].strip()
+    return s.strip('"').strip("'").strip()
+
+
+def clean_list(vals: list | None) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in vals or []:
+        s = clean_token(str(v))
+        if not s:
+            continue
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
+
+
+def normalize_geo(geos: list | None) -> list[str]:
+    aliases = {
+        "usa": "US",
+        "u.s.": "US",
+        "u.s.a.": "US",
+        "united states": "US",
+        "united states of america": "US",
+        "america": "US",
+        "uk": "GB",
+        "great britain": "GB",
+        "england": "GB",
+    }
+    out: list[str] = []
+    for g in clean_list(geos):
+        low = g.lower()
+        if low in aliases:
+            out.append(aliases[low])
+        elif len(g) == 2:
+            out.append(g.upper())
+        else:
+            out.append(g)
+    return out or ["US"]
+
+
 def build_query(cfg: dict, domain_excludes: list[str]) -> dict:
-    titles = cfg.get("titles") or ["CEO", "Founder", "Owner", "President"]
-    title_excl = cfg.get("title_exclude") or DEFAULT_TITLE_EXCLUDE
+    titles = clean_list(cfg.get("titles")) or ["CEO", "Founder", "Owner", "President"]
+    title_excl = clean_list(cfg.get("title_exclude")) or DEFAULT_TITLE_EXCLUDE
     q: dict = {
         "currentJobTitle": {"include": titles, "exclude": title_excl},
-        "profileLocation": {"include": cfg.get("geo") or ["US"]},
+        "profileLocation": {"include": normalize_geo(cfg.get("geo"))},
     }
     lo = cfg.get("headcount_min")
     hi = cfg.get("headcount_max")
@@ -189,8 +235,8 @@ def build_query(cfg: dict, domain_excludes: list[str]) -> dict:
         if hi is not None:
             band["<="] = int(hi)
         q["currentCompany.headcount"] = band
-    kw_inc = cfg.get("keyword_include") or []
-    kw_exc = cfg.get("keyword_exclude") or []
+    kw_inc = clean_list(cfg.get("keyword_include"))
+    kw_exc = clean_list(cfg.get("keyword_exclude"))
     if kw_inc or kw_exc:
         kw: dict = {}
         if kw_inc:
@@ -198,8 +244,8 @@ def build_query(cfg: dict, domain_excludes: list[str]) -> dict:
         if kw_exc:
             kw["exclude"] = kw_exc
         q["keyword"] = kw
-    ind_inc = cfg.get("industry_include") or []
-    ind_exc = cfg.get("industry_exclude") or []
+    ind_inc = clean_list(cfg.get("industry_include"))
+    ind_exc = clean_list(cfg.get("industry_exclude"))
     if ind_inc or ind_exc:
         ind: dict = {}
         if ind_inc:
@@ -287,25 +333,83 @@ def print_quote(q: dict) -> None:
 
 def scope_only(cfg: dict, excl: dict[str, set[str]]) -> dict:
     domains = website_exclude_list(excl["domains"])
-    q_raw = build_query(cfg, [])
     q_full = build_query(cfg, domains)
-    raw, cost = call("icypeas.people.search.count", {"query": q_raw})
-    assert cost == 0, cost
-    full, cost = call("icypeas.people.search.count", {"query": q_full})
-    assert cost == 0, cost
-    tam_raw = int(raw.get("total") or 0)
-    tam = int(full.get("total") or 0)
-    print("=== FREE TAM (icypeas.people.search.count) ===")
-    print(f"  Domain excludes in-query: {len(domains)}")
+
+    # Layered free counts so you can see what squeezes TAM
+    titles = clean_list(cfg.get("titles")) or ["CEO", "Founder", "Owner", "President"]
+    title_excl = clean_list(cfg.get("title_exclude")) or DEFAULT_TITLE_EXCLUDE
+    geo = normalize_geo(cfg.get("geo"))
+    layers: list[tuple[str, dict]] = []
+    q = {
+        "currentJobTitle": {"include": titles, "exclude": title_excl},
+        "profileLocation": {"include": geo},
+    }
+    layers.append(("titles + geo", dict(q)))
+    lo, hi = cfg.get("headcount_min"), cfg.get("headcount_max")
+    if lo is not None or hi is not None:
+        band: dict = {}
+        if lo is not None:
+            band[">="] = int(lo)
+        if hi is not None:
+            band["<="] = int(hi)
+        q["currentCompany.headcount"] = band
+        layers.append(("+ headcount", dict(q)))
+    ind_inc = clean_list(cfg.get("industry_include"))
+    ind_exc = clean_list(cfg.get("industry_exclude"))
+    if ind_inc or ind_exc:
+        ind: dict = {}
+        if ind_inc:
+            ind["include"] = ind_inc
+        if ind_exc:
+            ind["exclude"] = ind_exc
+        q["currentCompany.industry"] = ind
+        layers.append(("+ industry include/exclude", json.loads(json.dumps(q))))
+    kw_inc = clean_list(cfg.get("keyword_include"))
+    kw_exc = clean_list(cfg.get("keyword_exclude"))
+    if kw_inc or kw_exc:
+        kw: dict = {}
+        if kw_inc:
+            kw["include"] = kw_inc
+        if kw_exc:
+            kw["exclude"] = kw_exc
+        q["keyword"] = kw
+        layers.append(("+ keyword include/exclude", json.loads(json.dumps(q))))
+    if domains:
+        q_dom = json.loads(json.dumps(q))
+        q_dom["currentCompanyWebsite"] = {"exclude": domains}
+        layers.append((f"+ domain excludes ({len(domains)})", q_dom))
+
+    print("=== FREE TAM BREAKDOWN (icypeas.people.search.count) ===")
+    print(f"  Geo used: {geo}  (must be US not us — lowercase nearly zeros TAM)")
+    print(f"  Titles: {titles[:6]}{'…' if len(titles) > 6 else ''}")
+    if ind_inc or ind_exc:
+        print(f"  Industries include={ind_inc or '—'} exclude={ind_exc or '—'}")
+    if kw_inc or kw_exc:
+        print(f"  Keywords include={kw_inc or '—'} exclude={kw_exc or '—'}")
+    if ind_inc and kw_inc:
+        print(
+            "  WARNING: industry include AND keyword include are combined with AND — "
+            "this often makes TAM tiny. Prefer one include side."
+        )
     print(f"  LinkedIn skips (pre-Blitz only): {len(excl['linkedins'])}")
     print(f"  Email skips (post-find): {len(excl['emails'])}")
-    print(f"  TAM raw (no domain exclude):     {tam_raw:,}")
-    print(f"  TAM after in-query excludes:     {tam:,}  ← plan against this")
+    breakdown = []
+    tam = 0
+    for label, qq in layers:
+        out, cost = call("icypeas.people.search.count", {"query": qq})
+        assert cost == 0, cost
+        n = int(out.get("total") or 0)
+        breakdown.append({"layer": label, "tam": n})
+        print(f"  {label:40} {n:,}")
+        tam = n
+        time.sleep(0.15)
+    print(f"  FINAL TAM (plan against this):     {tam:,}")
     return {
-        "tam_raw": tam_raw,
+        "tam_raw": breakdown[0]["tam"] if breakdown else 0,
         "tam_after_excludes": tam,
         "domain_excludes": len(domains),
         "linkedin_skips": len(excl["linkedins"]),
+        "breakdown": breakdown,
         "query": q_full,
     }
 

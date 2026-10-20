@@ -50,6 +50,15 @@ Files land in `/workspace/artifacts/scrape-wizard/`:
 | “2000 ready leads” (email + details) | Option **1 — READY** |
 | “Scrape 2000 Icypeas people, take whatever emails hit” | Option **2 — ICYPEAS pull** |
 
+## Why TAM looks tiny (common gotchas)
+
+1. **Type `US` not `us`** for location. Lowercase `us` can drop TAM from hundreds of thousands to ~30.
+2. **Don’t wrap values in quotes.** Type `CEO` not `"CEO"`. Same for keywords.
+3. **Industry include + keyword include are AND’d.**  
+   e.g. Industry `Insurance` alone ≈ 12k; add keyword `"insurance agency"` and it shrinks a lot; both together is much smaller than either alone.  
+   For a broader TAM: use **industries OR keywords**, not both includes. Excludes are fine to combine.
+4. The wizard now prints a **TAM breakdown** layer by layer so you can see which filter squeezed it.
+
 ## Domain excludes (wizard asks you)
 
 The wizard asks you to pick **one**:
