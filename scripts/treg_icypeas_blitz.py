@@ -93,7 +93,7 @@ def treg_token() -> str:
 TOKEN = treg_token()
 
 
-def call(endpoint: str, body: dict | None = None) -> tuple[dict, int]:
+def call(endpoint: str, body: dict | None = None, retries: int = 5) -> tuple[dict, int]:
     data = None if body is None else json.dumps(body).encode()
     hdrs = {"X-Treg-Token": TOKEN, "Accept": "application/json"}
     if body is not None:
@@ -102,16 +102,28 @@ def call(endpoint: str, body: dict | None = None) -> tuple[dict, int]:
         hdrs["X-Treg-Route-Max-Cost"] = "0.01"
         hdrs["X-Treg-Route-Waterfall"] = "0"
         hdrs["X-Treg-Route-Exclude"] = "aiark,icypeas"
-    req = urllib.request.Request(
-        f"https://treg.to/call/{endpoint}",
-        data=data,
-        method="POST" if body is not None else "GET",
-        headers=hdrs,
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        cost = int(resp.headers.get("X-Treg-Cost-Micro") or 0)
-        raw = resp.read()
-        return (json.loads(raw.decode()) if raw else {}), cost
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        req = urllib.request.Request(
+            f"https://treg.to/call/{endpoint}",
+            data=data,
+            method="POST" if body is not None else "GET",
+            headers=hdrs,
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                cost = int(resp.headers.get("X-Treg-Cost-Micro") or 0)
+                raw = resp.read()
+                return (json.loads(raw.decode()) if raw else {}), cost
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code in (429, 503) and attempt < retries - 1:
+                wait = min(30, 2 ** attempt)
+                print(f"  Treg {e.code} on {endpoint}; retry in {wait}s…", flush=True)
+                time.sleep(wait)
+                continue
+            raise
+    raise last_err or RuntimeError("treg call failed")
 
 
 def norm_linkedin(url: str) -> str:

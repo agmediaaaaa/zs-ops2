@@ -7,6 +7,7 @@ This folder holds the **paste-ready master prompt** and the **safe terminal wiza
 | [HOW-TO-RUN-SAFE.md](./HOW-TO-RUN-SAFE.md) | **Start here if you are non-technical** — terminal wizard |
 | [MASTER-PROMPT.md](./MASTER-PROMPT.md) | Paste into a new agent chat (planning only; spend via wizard) |
 | [../scripts/scrape_wizard.py](../scripts/scrape_wizard.py) | Interactive Q&A — won’t spend until you type a dollar cap |
+| [../scripts/build_exclude_seed.py](../scripts/build_exclude_seed.py) | Build domain excludes: Supabase 7d/15d or PlusVibe campaigns |
 | [../scripts/treg_icypeas_blitz.py](../scripts/treg_icypeas_blitz.py) | Locked Icypeas→Blitz runner (`--confirm-spend` required) |
 | [../.cursor/rules/lead-scrape.mdc](../.cursor/rules/lead-scrape.mdc) | Always-on rule so agents load GitHub first |
 | [../.cursor/skills/lead-scrape-gates/SKILL.md](../.cursor/skills/lead-scrape-gates/SKILL.md) | Hard gates (free TAM → quote → ask cap → pilot → full) |

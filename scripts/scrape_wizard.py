@@ -23,8 +23,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "treg_icypeas_blitz.py"
+EXCLUDE_BUILDER = ROOT / "scripts" / "build_exclude_seed.py"
 OUT_DIR = Path("/workspace/artifacts/scrape-wizard")
 CONFIG_PATH = OUT_DIR / "last-run-config.json"
+EXCLUDE_PATH = OUT_DIR / "exclude-seed.json"
+DEFAULT_PLUSVIBE_WS = "6a8d53c5977bb5537e41fcf2"
 
 DEFAULT_TITLES = "CEO|Founder|Owner|President|Co-Founder"
 DEFAULT_TITLE_EXCLUDE = (
@@ -140,14 +143,93 @@ path mid-run. It only does: Icypeas people search → Blitz.
     kw_exc = split_pipe_or_comma(kw_exc_raw) if kw_exc_raw else []
 
     print(
-        "\nExisting-lead excludes (domains go INTO the Icypeas query before spend).\n"
-        "JSON file shape: {\"emails\":[], \"linkedins\":[], \"domains\":[\"acme.com\"]}"
+        """
+DOMAIN EXCLUDES — put known companies INTO the Icypeas query BEFORE spend
+(so you don't pay for rows you already have).
+
+Pick one:
+  0) Skip — no domain exclude from databases
+  1) Past 15 days leads (Supabase Lead Database + pipeline_leads)
+  2) Past 7 days leads (Supabase Lead Database + pipeline_leads)
+  3) Existing leads already in PlusVibe campaigns
+"""
     )
-    excl_raw = input("Path to exclude JSON (or blank if none yet): ").strip()
-    exclude_json = excl_raw if excl_raw else None
-    if exclude_json and not Path(exclude_json).exists():
-        print(f"  Warning: file not found ({exclude_json}). Continuing without it.")
-        exclude_json = None
+    while True:
+        excl_pick = ask("Type 0, 1, 2, or 3", "1")
+        if excl_pick in ("0", "1", "2", "3"):
+            break
+        print("  Type 0, 1, 2, or 3.")
+
+    source_map = {
+        "0": "none",
+        "1": "supabase_15d",
+        "2": "supabase_7d",
+        "3": "plusvibe",
+    }
+    excl_source = source_map[excl_pick]
+    plusvibe_ws = DEFAULT_PLUSVIBE_WS
+    plusvibe_camps = ""
+    if excl_source == "plusvibe":
+        plusvibe_ws = ask("PlusVibe workspace ID", DEFAULT_PLUSVIBE_WS)
+        print(
+            "\nOptional: limit to specific campaign IDs (comma-separated).\n"
+            "Leave blank = exclude leads from ALL campaigns in that workspace."
+        )
+        if ask_yes("List campaigns in this workspace first?", True):
+            run_cmd(
+                [
+                    sys.executable,
+                    str(EXCLUDE_BUILDER),
+                    "--source",
+                    "plusvibe",
+                    "--out",
+                    str(EXCLUDE_PATH),
+                    "--plusvibe-workspace",
+                    plusvibe_ws,
+                    "--list-campaigns",
+                ]
+            )
+        plusvibe_camps = input(
+            "Campaign IDs to exclude (comma-separated, or blank for ALL): "
+        ).strip()
+
+    print(f"\nBuilding exclude seed ({excl_source})…")
+    # Cap keeps Icypeas query reliable; newest Supabase domains kept first.
+    max_domains = 5000
+    if excl_source.startswith("supabase"):
+        max_domains = ask_int(
+            "Max domains to put in Icypeas query (cap; newest first)", 5000
+        )
+    build_cmd = [
+        sys.executable,
+        str(EXCLUDE_BUILDER),
+        "--source",
+        excl_source,
+        "--out",
+        str(EXCLUDE_PATH),
+        "--max-domains",
+        str(max_domains),
+    ]
+    if excl_source == "plusvibe":
+        build_cmd += ["--plusvibe-workspace", plusvibe_ws]
+        if plusvibe_camps:
+            build_cmd += ["--plusvibe-campaigns", plusvibe_camps]
+    rc = run_cmd(build_cmd)
+    if rc != 0:
+        print("Failed to build exclude seed. Fix the error above and re-run.")
+        sys.exit(rc)
+    exclude_json = str(EXCLUDE_PATH)
+    try:
+        seed = json.loads(EXCLUDE_PATH.read_text())
+        print(
+            f"Exclude seed ready → domains={len(seed.get('domains') or [])} "
+            f"linkedins={len(seed.get('linkedins') or [])} "
+            f"emails={len(seed.get('emails') or [])}\n"
+            "  Domains → Icypeas currentCompanyWebsite.exclude (in-query)\n"
+            "  LinkedIns → skipped after search, before Blitz (Icypeas can't exclude them in-query)"
+        )
+    except Exception:
+        pass
 
     print(
         """
@@ -192,6 +274,8 @@ VOLUME MODE — pick one:
         "keyword_include": kw_inc,
         "keyword_exclude": kw_exc,
         "exclude_json": exclude_json,
+        "exclude_source": excl_source,
+        "plusvibe_workspace": plusvibe_ws if excl_source == "plusvibe" else None,
         "mode": mode,
         "n": n,
         "pilot_n": pilot_n,

@@ -48,20 +48,31 @@ Files land in `/workspace/artifacts/scrape-wizard/`:
 | “2000 ready leads” (email + details) | Option **1 — READY** |
 | “Scrape 2000 Icypeas people, take whatever emails hit” | Option **2 — ICYPEAS pull** |
 
-## Exclude file (optional but recommended)
+## Domain excludes (wizard asks you)
 
-Create a JSON file of people/companies you already have:
+The wizard asks you to pick **one**:
 
-```json
-{
-  "emails": ["jane@acme.com"],
-  "linkedins": ["https://www.linkedin.com/in/jane"],
-  "domains": ["acme.com", "othercustomer.com"]
-}
+| Choice | What it skips |
+|--------|----------------|
+| **0** | No DB excludes |
+| **1** | Past **15 days** leads in Supabase (Lead Database + pipeline_leads) |
+| **2** | Past **7 days** leads in Supabase |
+| **3** | Existing leads already in **PlusVibe campaigns** |
+
+What happens:
+
+- **Company domains** → injected into Icypeas `currentCompanyWebsite.exclude` **before** any paid search
+- **Person LinkedIn URLs** → cannot go in the Icypeas query (API rejects them) → skipped **before Blitz** (free)
+- Seed file written to `/workspace/artifacts/scrape-wizard/exclude-seed.json`
+
+Manual build (optional):
+
+```bash
+python3 scripts/build_exclude_seed.py --source supabase_15d --out /workspace/artifacts/scrape-wizard/exclude-seed.json
+python3 scripts/build_exclude_seed.py --source supabase_7d --out /workspace/artifacts/scrape-wizard/exclude-seed.json
+python3 scripts/build_exclude_seed.py --source plusvibe --out /workspace/artifacts/scrape-wizard/exclude-seed.json --list-campaigns
+python3 scripts/build_exclude_seed.py --source plusvibe --out /workspace/artifacts/scrape-wizard/exclude-seed.json
 ```
-
-- **Domains** go into the Icypeas query **before** any paid search (so you don’t pay for them).
-- **LinkedIn URLs** cannot be excluded inside Icypeas — the script skips them **before Blitz** (free).
 
 ## If something looks wrong
 
