@@ -136,11 +136,40 @@ path mid-run. It only does: Icypeas people search → Blitz.
     hc_min = ask_int("Company headcount minimum", 5)
     hc_max = ask_int("Company headcount maximum", 100)
 
-    print("\nOptional keywords (leave blank to skip).")
-    kw_inc_raw = input("Keyword INCLUDE (comma-separated, or blank): ").strip()
-    kw_exc_raw = input("Keyword EXCLUDE (comma-separated, or blank): ").strip()
+    print(
+        """
+INDUSTRIES — go into the Icypeas query (currentCompany.industry).
+  Examples include: Medical Practices, Hospitals and Health Care, Manufacturing
+  Examples exclude: Software Development, Staffing and Recruiting, IT Services
+  Leave blank to skip that side.
+"""
+    )
+    ind_inc_raw = input("Industries to INCLUDE (comma-separated, or blank): ").strip()
+    ind_exc_raw = input("Industries to EXCLUDE (comma-separated, or blank): ").strip()
+    ind_inc = split_pipe_or_comma(ind_inc_raw) if ind_inc_raw else []
+    ind_exc = split_pipe_or_comma(ind_exc_raw) if ind_exc_raw else []
+
+    print(
+        """
+KEYWORDS — go into the Icypeas query (keyword.include / keyword.exclude).
+  Use INCLUDE for ICP phrases (e.g. urgent care, CNC machining).
+  Use EXCLUDE for noise (e.g. staffing, SaaS, recruiting).
+  Leave blank to skip that side.
+"""
+    )
+    kw_inc_raw = input("Keywords to INCLUDE (comma-separated, or blank): ").strip()
+    kw_exc_raw = input("Keywords to EXCLUDE (comma-separated, or blank): ").strip()
     kw_inc = split_pipe_or_comma(kw_inc_raw) if kw_inc_raw else []
     kw_exc = split_pipe_or_comma(kw_exc_raw) if kw_exc_raw else []
+
+    if not ind_inc and not ind_exc and not kw_inc and not kw_exc:
+        print(
+            "\n  Warning: no industries or keywords set. "
+            "TAM may be very broad — you can still continue."
+        )
+        if not ask_yes("Continue without industry/keyword filters?", True):
+            print("Stopped. Re-run and add industries and/or keywords.")
+            return
 
     print(
         """
@@ -273,6 +302,8 @@ VOLUME MODE — pick one:
         "headcount_max": hc_max,
         "keyword_include": kw_inc,
         "keyword_exclude": kw_exc,
+        "industry_include": ind_inc,
+        "industry_exclude": ind_exc,
         "exclude_json": exclude_json,
         "exclude_source": excl_source,
         "plusvibe_workspace": plusvibe_ws if excl_source == "plusvibe" else None,

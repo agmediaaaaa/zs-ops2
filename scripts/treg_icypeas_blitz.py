@@ -198,6 +198,15 @@ def build_query(cfg: dict, domain_excludes: list[str]) -> dict:
         if kw_exc:
             kw["exclude"] = kw_exc
         q["keyword"] = kw
+    ind_inc = cfg.get("industry_include") or []
+    ind_exc = cfg.get("industry_exclude") or []
+    if ind_inc or ind_exc:
+        ind: dict = {}
+        if ind_inc:
+            ind["include"] = ind_inc
+        if ind_exc:
+            ind["exclude"] = ind_exc
+        q["currentCompany.industry"] = ind
     if domain_excludes:
         q["currentCompanyWebsite"] = {"exclude": domain_excludes}
     return q
@@ -524,6 +533,14 @@ def load_config(path: Path | None, args: argparse.Namespace) -> dict:
         cfg["keyword_include"] = [k.strip() for k in args.keyword_include.split("|") if k.strip()]
     if args.keyword_exclude:
         cfg["keyword_exclude"] = [k.strip() for k in args.keyword_exclude.split("|") if k.strip()]
+    if getattr(args, "industry_include", None):
+        cfg["industry_include"] = [
+            k.strip() for k in args.industry_include.split("|") if k.strip()
+        ]
+    if getattr(args, "industry_exclude", None):
+        cfg["industry_exclude"] = [
+            k.strip() for k in args.industry_exclude.split("|") if k.strip()
+        ]
     if args.client:
         cfg["client"] = args.client
     if args.allow_empty_desc:
@@ -553,6 +570,8 @@ def main() -> None:
     ap.add_argument("--headcount-max", type=int, default=None)
     ap.add_argument("--keyword-include", type=str, default=None)
     ap.add_argument("--keyword-exclude", type=str, default=None)
+    ap.add_argument("--industry-include", type=str, default=None, help="Pipe-separated industries")
+    ap.add_argument("--industry-exclude", type=str, default=None, help="Pipe-separated industries")
     ap.add_argument("--allow-empty-desc", action="store_true")
     args = ap.parse_args()
 

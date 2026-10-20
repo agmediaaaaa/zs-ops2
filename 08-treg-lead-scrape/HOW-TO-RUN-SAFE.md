@@ -21,13 +21,15 @@ python3 scripts/scrape_wizard.py
 
 Then answer the questions:
 
-1. Who to target (titles, location, company size)
-2. What to exclude (junk titles; optional exclude file with domains)
-3. **Ready leads** vs **Icypeas pull**
-4. Pilot size (start small)
-5. It shows **free TAM** (after domain excludes) — no spend
-6. It shows a **cost estimate** — no spend
-7. It asks **your** cost cap — type something like `2.50`, then type `confirm 2.50`
+1. Who to target (titles include/exclude, location, company size)
+2. **Industries** to include and/or exclude
+3. **Keywords** to include and/or exclude
+4. Domain excludes (Supabase 7d / 15d / PlusVibe / skip)
+5. **Ready leads** vs **Icypeas pull**
+6. Pilot size (start small)
+7. It shows **free TAM** (after domain excludes) — no spend
+8. It shows a **cost estimate** — no spend
+9. It asks **your** cost cap — type something like `2.50`, then type `confirm 2.50`
 
 Only after step 7 does it call paid Icypeas → Blitz.
 

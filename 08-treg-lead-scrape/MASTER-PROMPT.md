@@ -206,18 +206,20 @@ Because `profileUrl` is a forbidden query key:
 After reading the repo, ask me these (skip any I already answered in the first message):
 
 1. Client code (e.g. ATC, MARS, GWS, ZS)?
-2. Who to target: titles, seniority, geo, headcount, industries, keywords include?
-3. What to exclude: titles, keywords, domains, PlusVibe workspace, existing lists?
-4. **Volume mode (ALWAYS ASK if not crystal clear) — pick one:**
+2. Who to target: titles, seniority, geo, headcount?
+3. Industries to INCLUDE and EXCLUDE (Icypeas `currentCompany.industry`)?
+4. Keywords to INCLUDE and EXCLUDE (Icypeas `keyword`)?
+5. What else to exclude: junk titles, domains (Supabase 7d/15d or PlusVibe), existing lists?
+6. **Volume mode (ALWAYS ASK if not crystal clear) — pick one:**
    - **Ready-target:** “I need N **ready** leads” = N people with email + required fields.
      Keep Icypeas→Blitz until N ready (or TAM/cap exhausted). Quote must model
      search overpull + Blitz attempts, not assume 1:1.
    - **Pull-N (Icypeas scrape):** “Scrape N **Icypeas** leads / pull N people” =
      query exactly N people from Icypeas, then Blitz that batch only; ready = whatever
      emails hit. Do **not** keep paging to force N emails.
-5. Pilot size?
-6. Required fields (default: name, title, employee count, company desc, email, location, LinkedIn, company website)?
-7. Upload destination (Supabase list name / PlusVibe campaign)?
+7. Pilot size?
+8. Required fields (default: name, title, employee count, company desc, email, location, LinkedIn, company website)?
+9. Upload destination (Supabase list name / PlusVibe campaign)?
 
 If I say ambiguous “2000 leads” / “2000 prospects” without “ready” or “Icypeas/pull”,
 ASK which mode before quoting or spending.
