@@ -345,6 +345,15 @@ def run(ready_per: int, hard_cap: float, exclude_path: str | None = None) -> Non
         nonlocal spend_micro
         if spend_micro / 1e6 >= hard_cap:
             raise RuntimeError(f"hard cap ${hard_cap} reached")
+        # Preflight: Icypeas bills per returned row; refuse a page that would overshoot.
+        if endpoint == "icypeas.people.search":
+            size = int(((body or {}).get("pagination") or {}).get("size") or 0)
+            projected = spend_micro / 1e6 + size * 0.00038
+            if size and projected > hard_cap:
+                raise RuntimeError(
+                    f"hard cap ${hard_cap} would be exceeded by next page "
+                    f"(projected ${projected:.4f} for size={size})"
+                )
         out, cost = call(endpoint, body)
         spend_micro += cost
         if spend_micro / 1e6 > hard_cap:
@@ -360,17 +369,45 @@ def run(ready_per: int, hard_cap: float, exclude_path: str | None = None) -> Non
         tam[c["id"]] = out.get("total") or 0
         print(f"  {c['id']}: {tam[c['id']]:,}")
 
+    # Pull-N budget: keep search pages small so a thin vertical can't burn the whole cap.
+    page_size = 25 if ready_per <= 15 else 50
+    max_pages = 4 if ready_per <= 15 else 8
+    cand_mult = 2 if ready_per <= 15 else 3
+
     for c in CAMPAIGNS:
         print(f"\n--- {c['id']} {c['name']} ---")
+        if spend_micro / 1e6 >= hard_cap * 0.95:
+            print(f"  skip: near hard cap (${spend_micro/1e6:.4f}/${hard_cap})")
+            camps.append(
+                {
+                    "id": c["id"],
+                    "tam": tam[c["id"]],
+                    "searched": 0,
+                    "candidates": 0,
+                    "skipped_existing": 0,
+                    "rejected_quality": 0,
+                    "email_attempts": 0,
+                    "email_hits": 0,
+                    "ready": 0,
+                    "skipped_reason": "near_hard_cap",
+                }
+            )
+            continue
         q = with_domain_exclude(c["query"], excl_domains)
         candidates = []
         token = None
         searched = skipped_existing = rejected_quality = 0
-        for _ in range(8):
-            body = {"query": q, "pagination": {"size": 50}}
+        early_stop = None
+        for _ in range(max_pages):
+            body = {"query": q, "pagination": {"size": page_size}}
             if token:
                 body["pagination"]["token"] = token
-            out = pay("icypeas.people.search", body)
+            try:
+                out = pay("icypeas.people.search", body)
+            except RuntimeError as e:
+                print(f"  stop/search: {e}")
+                early_stop = str(e)
+                break
             leads = out.get("leads") or []
             searched += len(leads)
             for L in leads:
@@ -389,17 +426,28 @@ def run(ready_per: int, hard_cap: float, exclude_path: str | None = None) -> Non
                     continue
                 seen_li.add(li)
                 candidates.append(L)
-                if len(candidates) >= ready_per * 3:
+                if len(candidates) >= ready_per * cand_mult:
                     break
             token = (out.get("pagination") or {}).get("token")
-            if not token or len(candidates) >= ready_per * 3:
+            if not token or len(candidates) >= ready_per * cand_mult:
                 break
-            time.sleep(0.1)
+            # Early-stop: too many billed rows per candidate
+            if candidates and searched / max(len(candidates), 1) > 12:
+                early_stop = f"rows/candidate={searched/len(candidates):.1f}"
+                print(f"  early-stop search: {early_stop}")
+                break
+            if not candidates and searched >= page_size * 2:
+                early_stop = "no_candidates_after_2_pages"
+                print(f"  early-stop search: {early_stop}")
+                break
+            time.sleep(0.15)
 
         ready = []
         attempts = hits = 0
         for L in candidates:
             if len(ready) >= ready_per:
+                break
+            if spend_micro / 1e6 >= hard_cap:
                 break
             attempts += 1
             li = L["profileUrl"]
@@ -420,7 +468,7 @@ def run(ready_per: int, hard_cap: float, exclude_path: str | None = None) -> Non
             if el in seen_email:
                 skipped_existing += 1
                 continue
-            if any(el.endswith("@" + d) for d in ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com"]):
+            if any(el.endswith("@" + d) for d in ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "aol.com"]):
                 continue
             seen_email.add(el)
             hits += 1
@@ -444,6 +492,10 @@ def run(ready_per: int, hard_cap: float, exclude_path: str | None = None) -> Non
             print(f"  ✓ {ready[-1]['name']} <{email}>")
             time.sleep(0.08)
 
+        # Early-stop signal for bad email economics
+        if ready and attempts / max(len(ready), 1) > 4:
+            print(f"  warn: email_attempts/ready={attempts/len(ready):.1f}")
+
         camps.append(
             {
                 "id": c["id"],
@@ -455,6 +507,7 @@ def run(ready_per: int, hard_cap: float, exclude_path: str | None = None) -> Non
                 "email_attempts": attempts,
                 "email_hits": hits,
                 "ready": len(ready),
+                "early_stop": early_stop,
             }
         )
         rows.extend(ready)
