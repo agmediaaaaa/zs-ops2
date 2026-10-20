@@ -173,11 +173,14 @@ That pays Icypeas for rows you already knew you did not want.
    - Optional: also `currentCompanyName.exclude` for known company names
    - Do this BEFORE paid search — not after
 
-3. **Keyword exclude**
-   - `keyword.exclude` = staffing, recruiting, SaaS, software, consulting firm, etc.
-     (whatever I specify for this campaign)
+3. **Keyword include + exclude**
+   - `keyword.include` / `keyword.exclude` (whatever I specify for this campaign)
 
-4. **Headcount / geo / industry** as I specify
+4. **Industry include + exclude**
+   - `currentCompany.industry.include` / `.exclude`
+   - Ask me for both sides; blank is allowed but warn if both keyword and industry are empty
+
+5. **Headcount / geo** as I specify
    - Use flat dotted keys: `currentCompany.headcount` (nested `currentCompany:{headcount}` fails)
 
 ### Person LinkedIn — post-search skip only (Icypeas cannot exclude these in-query)
