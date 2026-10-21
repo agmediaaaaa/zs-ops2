@@ -1,0 +1,39 @@
+---
+description: Cost-controlled Treg lead scrapes — GitHub repo is source of truth; Icypeas→Blitz; gates before spend
+alwaysApply: true
+---
+
+# Lead scrape (always-on)
+
+When the user asks to scrape, enrich, build a list, get TAM, or pull prospects via Treg / Icypeas / Blitz / PlusVibe:
+
+## Source of truth
+
+1. Read **this repo first** — never Notion / Drive / Slack / Airtable for scrape SOPs.
+2. Load in order:
+   - `.cursor/skills/lead-scrape-gates/SKILL.md`
+   - `docs/waterfall-cost-matrix.md`
+   - `08-treg-lead-scrape/MASTER-PROMPT.md`
+   - Matching runner under `scripts/` (e.g. `pilot_icypeas_blitz_four_verticals.py`)
+
+## Locked path (default)
+
+`icypeas.people.search.count` (free) → `icypeas.people.search` → Supabase + PlusVibe cost-skip → `blitzapi.people.email.find` → bulk Supabase upload.
+
+Blitz headers: `X-Treg-Route-Max-Cost: 0.01`, `X-Treg-Route-Waterfall: 0`, `X-Treg-Route-Exclude: aiark,icypeas`.
+
+## Hard stops
+
+- **No invented spend caps.** Ask for `--confirm-spend <USD>` after free TAM + catalog quote.
+- “Scrape 2k” / “just run it” is **not** spend approval for full volume.
+- Put title/domain/keyword **excludes in the Icypeas query** before paid search.
+- PlusVibe = send suppress for ready; Supabase = cost skip. Load both before Blitz.
+- **Pull-N** = pull N people, enrich that batch only — do not page until N ready emails.
+- Early-stop if economics die (~>$5–10/1k ready, ≫12 search rows/ready, ≫4 email attempts/ready). Ask; do not broaden filters into the wallet.
+
+## Do not
+
+- Freestyle paid `/call/` loops when a runner exists
+- Use AI Ark / Icypeas email find / ContactOut verify for volume unless explicitly opted in
+- Row-by-row Supabase uploads for 100+ leads
+- Mark ready without company description when campaigns need it
