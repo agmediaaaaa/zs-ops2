@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "ai-ark": {
+      "url": "https://api.ai-ark.com/v1/mcp?token=ac6f721eceb14dac88582d7ba0cc397c"
+    }
+  }
+}
