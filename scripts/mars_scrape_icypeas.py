@@ -301,6 +301,296 @@ def with_domain_exclude(query: dict, domains: list[str], max_domains: int) -> di
     return q
 
 
+FREEMAIL = ("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "aol.com", "protonmail.com", "live.com", "msn.com")
+
+
+def title_ok(title: str) -> bool:
+    """Safety net — ICP titles only; allow VP Ops / VP Manufacturing."""
+    t = (title or "").lower()
+    if any(
+        x in t
+        for x in (
+            "assistant",
+            "intern",
+            "student",
+            "recruit",
+            "sales",
+            "marketing",
+            "machinist",
+            "technician",
+            "purchasing",
+            "buyer",
+            "cfo",
+            "cto",
+        )
+    ):
+        if "vp of operations" not in t and "vp manufacturing" not in t and "vice president of operations" not in t:
+            if any(x in t for x in ("assistant", "intern", "student", "recruit", "machinist", "technician", "purchasing", "buyer", "cfo", "cto")):
+                return False
+            if "sales" in t or "marketing" in t:
+                return False
+    needles = (
+        "owner",
+        "founder",
+        "ceo",
+        "president",
+        "coo",
+        "general manager",
+        "plant manager",
+        "operations manager",
+        "production manager",
+        "director of operations",
+        "director of manufacturing",
+        "vp of operations",
+        "vp manufacturing",
+        "vice president of operations",
+        "vice president of manufacturing",
+        "vp operations",
+        "vp of manufacturing",
+    )
+    return any(n in t for n in needles)
+
+
+def emp_ok(n) -> bool:
+    try:
+        n = int(n)
+        return 10 <= n <= 1000
+    except Exception:
+        return False
+
+
+def bare_domain(url: str) -> str:
+    u = (url or "").lower().strip()
+    u = u.replace("https://", "").replace("http://", "")
+    if u.startswith("www."):
+        u = u[4:]
+    return u.split("/")[0].split("?")[0]
+
+
+def run_pull(
+    pull: int,
+    hard_cap: float,
+    exclude_path: str | None,
+    max_domains: int,
+    slice_ids: list[str] | None = None,
+) -> dict:
+    """Pull-N from Icypeas (MARS-and by default), Blitz email.find, abort at hard_cap."""
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    excl_emails, excl_li, excl_domains = load_exclude(exclude_path)
+    seen_li = set(excl_li)
+    seen_email = set(excl_emails)
+    domain_set = set(excl_domains)
+    spend_micro = 0
+    search_rows = 0
+    email_attempts = 0
+    email_hits = 0
+    freemail = 0
+    skipped_known = 0
+    title_emp_fail = 0
+    no_desc = 0
+    ready: list[dict] = []
+
+    want = set(slice_ids) if slice_ids else {"MARS-and"}
+    active = [s for s in slices() if s["id"] in want]
+    if not active:
+        raise SystemExit(f"No matching slices for {want}")
+
+    def pay(endpoint: str, body: dict) -> dict:
+        nonlocal spend_micro
+        if spend_micro / 1e6 >= hard_cap:
+            raise RuntimeError(f"hard cap ${hard_cap} reached")
+        if endpoint == "icypeas.people.search":
+            size = int(((body or {}).get("pagination") or {}).get("size") or 0)
+            projected = spend_micro / 1e6 + size * 0.00038
+            if size and projected > hard_cap:
+                raise RuntimeError(
+                    f"hard cap ${hard_cap} would be exceeded by next page "
+                    f"(projected ${projected:.4f} for size={size})"
+                )
+        out, cost = call(endpoint, body)
+        spend_micro += cost
+        if spend_micro / 1e6 > hard_cap:
+            raise RuntimeError(f"hard cap ${hard_cap} exceeded (spent ${spend_micro/1e6:.4f})")
+        return out
+
+    print(f"Exclude: emails={len(excl_emails)} linkedin={len(excl_li)} domains={len(excl_domains)}")
+    print(f"Pull-N={pull} hard_cap=${hard_cap} slices={[s['id'] for s in active]}")
+    print("=== FREE TAM ===")
+    tam: dict[str, int] = {}
+    for sl in active:
+        q = with_domain_exclude(sl["query"], excl_domains, max_domains)
+        out = pay("icypeas.people.search.count", {"query": q})
+        tam[sl["id"]] = out.get("total") or 0
+        print(f"  {sl['id']}: {tam[sl['id']]:,}")
+        time.sleep(0.5)
+
+    # Pull fixed N people (not until N ready)
+    page_size = min(50, pull)
+    candidates: list[dict] = []
+    for sl in active:
+        if len(candidates) >= pull:
+            break
+        q = with_domain_exclude(sl["query"], excl_domains, max_domains)
+        token = None
+        pages = 0
+        while len(candidates) < pull and pages < 6:
+            need = pull - len(candidates)
+            size = min(page_size, max(need, 10))
+            body: dict = {"query": q, "pagination": {"size": size}}
+            if token:
+                body["pagination"]["token"] = token
+            try:
+                out = pay("icypeas.people.search", body)
+            except RuntimeError as e:
+                print(f"  stop/search: {e}")
+                break
+            leads = out.get("leads") or []
+            search_rows += len(leads)
+            pages += 1
+            for L in leads:
+                if len(candidates) >= pull:
+                    break
+                title = L.get("lastJobTitle") or L.get("headline") or ""
+                if not title_ok(title) or not emp_ok(L.get("lastCompanySize")):
+                    title_emp_fail += 1
+                    continue
+                li = norm_li(L.get("profileUrl") or "")
+                if not li:
+                    continue
+                if li in seen_li:
+                    skipped_known += 1
+                    continue
+                website = bare_domain(L.get("lastCompanyWebsite") or "")
+                if website and website in domain_set:
+                    skipped_known += 1
+                    continue
+                seen_li.add(li)
+                row = dict(L)
+                row["_slice"] = sl["id"]
+                candidates.append(row)
+            token = (out.get("pagination") or {}).get("token")
+            print(f"  {sl['id']} page={pages} searched={search_rows} candidates={len(candidates)}")
+            if not token or not leads:
+                break
+            time.sleep(0.15)
+
+    pulled = len(candidates)
+    print(f"\n=== Blitz email.find on {pulled} candidates (Pull-N) ===")
+    for L in candidates:
+        if spend_micro / 1e6 >= hard_cap:
+            print("  stop: hard cap")
+            break
+        # require company description for ready
+        desc = (L.get("lastCompanyDescription") or "").strip()
+        if not desc:
+            no_desc += 1
+            continue
+        email_attempts += 1
+        li = L["profileUrl"]
+        try:
+            eout = pay("blitzapi.people.email.find", {"person_linkedin_url": li})
+        except (RuntimeError, urllib.error.HTTPError) as e:
+            print(f"  stop/email: {e}")
+            break
+        email = eout.get("email") if isinstance(eout, dict) else None
+        if not email and isinstance(eout, dict):
+            for item in eout.get("all_emails") or []:
+                if isinstance(item, dict) and item.get("email"):
+                    email = item["email"]
+                    break
+        if not email:
+            continue
+        el = email.lower().strip()
+        if el in seen_email:
+            skipped_known += 1
+            continue
+        if any(el.endswith("@" + d) for d in FREEMAIL):
+            freemail += 1
+            continue
+        seen_email.add(el)
+        email_hits += 1
+        ready.append(
+            {
+                "slice": L.get("_slice"),
+                "name": f"{L.get('firstname') or ''} {L.get('lastname') or ''}".strip(),
+                "job_title": L.get("lastJobTitle") or L.get("headline"),
+                "employee_count": L.get("lastCompanySize"),
+                "company_desc": desc[:500],
+                "email": email,
+                "location": L.get("address") or L.get("lastCompanyAddress"),
+                "company_name": L.get("lastCompanyName"),
+                "company_website": L.get("lastCompanyWebsite"),
+                "company_industry": L.get("lastCompanyIndustry"),
+                "person_linkedin": norm_li(li),
+                "company_linkedin": L.get("lastCompanyUrl"),
+            }
+        )
+        print(f"  ✓ {ready[-1]['name']} <{email}> @ {ready[-1]['company_name']}")
+        time.sleep(0.08)
+
+    spend = spend_micro / 1e6
+    ready_n = len(ready)
+    coverage = round(ready_n / pulled, 3) if pulled else 0.0
+    report = {
+        "client": "MARS",
+        "path": "icypeas.people.search → blitzapi.people.email.find",
+        "at": datetime.now(timezone.utc).isoformat(),
+        "hard_cap_usd": hard_cap,
+        "spend_usd": round(spend, 6),
+        "pull_target": pull,
+        "pulled": pulled,
+        "search_rows": search_rows,
+        "skipped_known": skipped_known,
+        "title_emp_fail": title_emp_fail,
+        "no_company_desc": no_desc,
+        "email_attempts": email_attempts,
+        "email_hits": email_hits,
+        "freemail_drop": freemail,
+        "ready": ready_n,
+        "coverage": coverage,
+        "tam": tam,
+        "excluded": {"emails": len(excl_emails), "linkedin": len(excl_li), "domains": len(excl_domains)},
+        "unit_economics": {
+            "rows_per_ready": round(search_rows / ready_n, 2) if ready_n else None,
+            "email_attempts_per_ready": round(email_attempts / ready_n, 2) if ready_n else None,
+            "cost_per_1k_ready_usd": round(spend / ready_n * 1000, 2) if ready_n else None,
+            "blitz_hit_rate": round(email_hits / email_attempts, 3) if email_attempts else None,
+        },
+        "rows": ready,
+    }
+    cols = [
+        "slice",
+        "name",
+        "job_title",
+        "employee_count",
+        "company_desc",
+        "email",
+        "location",
+        "company_name",
+        "company_website",
+        "company_industry",
+        "person_linkedin",
+        "company_linkedin",
+    ]
+    with open(OUT_DIR / "pilot-ready.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(ready)
+    (OUT_DIR / "pilot-report.json").write_text(json.dumps(report, indent=2))
+    print(json.dumps({k: report[k] for k in (
+        "spend_usd", "pulled", "ready", "coverage", "unit_economics", "tam", "skipped_known", "freemail_drop", "no_company_desc"
+    )}, indent=2))
+    # early-stop warning
+    ue = report["unit_economics"]
+    if ready_n and (
+        (ue["rows_per_ready"] or 0) > 12
+        or (ue["email_attempts_per_ready"] or 0) > 4
+        or (ue["cost_per_1k_ready_usd"] or 0) > 10
+    ):
+        print("⚠ Unit economics outside healthy band — review before full volume.")
+    return report
+
+
 def scope_only(exclude_path: str | None, max_domains: int) -> None:
     _, _, domains = load_exclude(exclude_path)
     print("=== FREE TAM (icypeas.people.search.count) — MARS broad ===")
@@ -352,9 +642,15 @@ def scope_only(exclude_path: str | None, max_domains: int) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="MARS Icypeas→Blitz scrape")
     ap.add_argument("--scope-only", action="store_true")
-    ap.add_argument("--pull", type=int, default=0)
+    ap.add_argument("--pull", type=int, default=0, help="Pull-N people from Icypeas (enrich that batch only)")
     ap.add_argument("--confirm-spend", type=float, default=0.0)
     ap.add_argument("--exclude-json", default="")
+    ap.add_argument(
+        "--slice",
+        action="append",
+        default=[],
+        help="Slice id(s): MARS-and (default), MARS-ind, MARS-kw",
+    )
     ap.add_argument(
         "--max-domains",
         type=int,
@@ -371,9 +667,14 @@ def main() -> None:
         if args.confirm_spend <= 0:
             print("Refusing paid run without --confirm-spend <USD>", file=sys.stderr)
             sys.exit(2)
-        print("Paid pull not implemented in this turn — use after confirm.", file=sys.stderr)
-        print("Got --pull", args.pull, "--confirm-spend", args.confirm_spend)
-        sys.exit(3)
+        run_pull(
+            pull=args.pull,
+            hard_cap=args.confirm_spend,
+            exclude_path=args.exclude_json or None,
+            max_domains=args.max_domains,
+            slice_ids=args.slice or ["MARS-and"],
+        )
+        return
 
     ap.print_help()
     sys.exit(2)
