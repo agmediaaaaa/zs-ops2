@@ -532,6 +532,43 @@ def run_pull(
             time.sleep(0.12)
 
     pulled = len(candidates)
+    # Persist candidates so Blitz can resume without re-paying Icypeas search
+    cand_path = OUT_DIR / "volume-candidates.json"
+    slim = []
+    for L in candidates:
+        slim.append(
+            {
+                "profileUrl": L.get("profileUrl"),
+                "firstname": L.get("firstname"),
+                "lastname": L.get("lastname"),
+                "lastJobTitle": L.get("lastJobTitle"),
+                "headline": L.get("headline"),
+                "lastCompanySize": L.get("lastCompanySize"),
+                "lastCompanyDescription": L.get("lastCompanyDescription"),
+                "address": L.get("address"),
+                "lastCompanyAddress": L.get("lastCompanyAddress"),
+                "lastCompanyName": L.get("lastCompanyName"),
+                "lastCompanyWebsite": L.get("lastCompanyWebsite"),
+                "lastCompanyIndustry": L.get("lastCompanyIndustry"),
+                "lastCompanyUrl": L.get("lastCompanyUrl"),
+                "_slice": L.get("_slice"),
+            }
+        )
+    cand_path.write_text(
+        json.dumps(
+            {
+                "at": datetime.now(timezone.utc).isoformat(),
+                "pull_target": pull,
+                "search_rows": search_rows,
+                "search_spend_usd": round(spend_micro / 1e6, 6),
+                "tam": tam,
+                "candidates": slim,
+            },
+            indent=2,
+        )
+    )
+    print(f"Wrote {cand_path} ({len(slim)} candidates)")
+
     print(f"\n=== Blitz email.find on {pulled} candidates (Pull-N) ===")
     for i, L in enumerate(candidates, 1):
         if spend_micro / 1e6 >= hard_cap:
@@ -560,7 +597,7 @@ def run_pull(
                     email = item["email"]
                     break
         if not email:
-            if i % 50 == 0:
+            if i % 100 == 0:
                 print(f"  … {i}/{pulled} attempts={email_attempts} ready={len(ready)} spend=${spend_micro/1e6:.4f}")
             continue
         el = email.lower().strip()
@@ -588,20 +625,19 @@ def run_pull(
                 "company_linkedin": L.get("lastCompanyUrl"),
             }
         )
-        if len(ready) <= 5 or len(ready) % 25 == 0 or i == pulled:
+        if len(ready) <= 5 or len(ready) % 50 == 0 or i == pulled:
             print(
                 f"  ✓ [{len(ready)}] {ready[-1]['name']} <{email}> @ {ready[-1]['company_name']} "
                 f"(spend=${spend_micro/1e6:.4f})"
             )
-        # early-stop if unit econ dies after a meaningful sample
-        if len(ready) >= 40:
-            rpr = search_rows / len(ready)
+        # Early-stop ONLY on email-phase econ (search is sunk in Pull-N).
+        if len(ready) >= 50 and email_attempts >= 100:
             epr = email_attempts / len(ready)
-            cpk = (spend_micro / 1e6) / len(ready) * 1000
-            if rpr > 12 or epr > 4 or cpk > 10:
+            hit = email_hits / email_attempts
+            if epr > 4 or hit < 0.15:
                 print(
-                    f"  EARLY-STOP bad unit econ: rows/ready={rpr:.1f} "
-                    f"email_att/ready={epr:.1f} $/1k={cpk:.2f}"
+                    f"  EARLY-STOP bad email econ: email_att/ready={epr:.1f} "
+                    f"hit_rate={hit:.3f}"
                 )
                 break
         time.sleep(0.05)
@@ -662,14 +698,14 @@ def run_pull(
     print(json.dumps({k: report[k] for k in (
         "spend_usd", "pulled", "ready", "coverage", "unit_economics", "tam", "skipped_known", "freemail_drop", "no_company_desc"
     )}, indent=2))
-    # early-stop warning
+    # End warning: in Pull-N, search_rows/ready can look high if Blitz was truncated.
+    # Flag only when email-phase econ is bad OR final $/1k is bad with meaningful ready.
     ue = report["unit_economics"]
-    if ready_n and (
-        (ue["rows_per_ready"] or 0) > 12
-        or (ue["email_attempts_per_ready"] or 0) > 4
-        or (ue["cost_per_1k_ready_usd"] or 0) > 10
+    if ready_n and ready_n >= 25 and (
+        (ue["email_attempts_per_ready"] or 0) > 4
+        or ((ue["cost_per_1k_ready_usd"] or 0) > 10 and (ue["blitz_hit_rate"] or 1) < 0.25)
     ):
-        print("⚠ Unit economics outside healthy band — review before full volume.")
+        print("⚠ Unit economics outside healthy band — review before more volume.")
     return report
 
 
