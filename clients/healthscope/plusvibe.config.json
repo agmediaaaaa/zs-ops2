@@ -1,0 +1,11 @@
+{
+  "workspace_name": "Healthscope Services",
+  "workspace_id": "6a1334c74be1e70c4918deab",
+  "campaign_id": "6a23d05c89340604384ff7fd",
+  "campaign_name": "Basic Outreach",
+  "template_workspace_id": "69a5b2169433a45c6f6d7d1c",
+  "template_campaign_id": "69fae9c435ed857458d57321",
+  "template_campaign": "v2 SaaS(11-50)-Csuite-Google",
+  "subject_line": "{{first_name}}",
+  "body": ""
+}

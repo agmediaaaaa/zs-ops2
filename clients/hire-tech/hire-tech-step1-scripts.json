@@ -1,0 +1,5 @@
+{
+  "subject": "{{first_name}}",
+  "source": "clients/custom-talent/custom-talent-step1-scripts.json",
+  "variations": "See canonical scripts in clients/custom-talent/custom-talent-step1-scripts.json"
+}

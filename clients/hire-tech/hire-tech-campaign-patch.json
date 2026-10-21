@@ -1,0 +1,94 @@
+{
+  "workspace_id": "6a13348c960455ee22ae829d",
+  "campaign_id": "6a21ce2c38749bf6ddf2cd89",
+  "sequences": [
+    {
+      "step": 1,
+      "wait_time": 1,
+      "variations": [
+        {
+          "variation": "A",
+          "name": "Version 1 - My Favorite",
+          "subject": "{{first_name}}",
+          "body": "<div>{{first_name}},</div><div><br></div><div>looks like you're building {{custom_company_type}}.</div><div><br></div><div>Teams in that space often need strong {{custom_talent_type}} talent, especially when candidates have experience like {{custom_teaser}}.</div><div><br></div><div>Open to a quick call? Happy to learn more about your team and share the types of profiles we've been seeing.</div>"
+        },
+        {
+          "variation": "B",
+          "name": "Version 2",
+          "subject": "{{first_name}}",
+          "body": "<div>{{first_name}},</div><div><br></div><div>noticed you're in the {{custom_company_type}} space.</div><div><br></div><div>Curious how you're approaching {{custom_talent_type}} hiring these days.</div><div><br></div><div>We're seeing more candidates with backgrounds like {{custom_teaser}} enter the market.</div><div><br></div><div>Worth a quick conversation?</div>"
+        },
+        {
+          "variation": "C",
+          "name": "Version 3",
+          "subject": "{{first_name}}",
+          "body": "<div>{{first_name}},</div><div><br></div><div>companies building {{custom_company_type}} usually tell us finding experienced {{custom_talent_type}} talent is easier said than done.</div><div><br></div><div>We've been seeing more candidates with experience around {{custom_teaser}} recently.</div><div><br></div><div>Open to a quick chat to hear what you're seeing on your side?</div>"
+        },
+        {
+          "variation": "D",
+          "name": "Version 4",
+          "subject": "{{first_name}}",
+          "body": "<div>{{first_name}},</div><div><br></div><div>not sure if hiring is a priority right now.</div><div><br></div><div>That said, teams building {{custom_company_type}} often ask us about {{custom_talent_type}} talent with experience like {{custom_teaser}}.</div><div><br></div><div>Would it make sense to have a quick conversation and see if there's any overlap?</div>"
+        },
+        {
+          "variation": "E",
+          "name": "Version 5",
+          "subject": "{{first_name}}",
+          "body": "<div>{{first_name}},</div><div><br></div><div>quick question.</div><div><br></div><div>When companies in {{custom_company_type}} need {{custom_talent_type}} talent, are you handling those searches internally?</div><div><br></div><div>We've been spending a lot of time around candidates with backgrounds like {{custom_teaser}}.</div><div><br></div><div>Open to a brief chat?</div>"
+        },
+        {
+          "variation": "F",
+          "name": "Version 6 - Most Consultative",
+          "subject": "{{first_name}}",
+          "body": "<div>{{first_name}},</div><div><br></div><div>saw you're building {{custom_company_type}}.</div><div><br></div><div>We're spending a lot of time speaking with {{custom_talent_type}} candidates, particularly those who've worked on things like {{custom_teaser}}.</div><div><br></div><div>Open to a quick call? Happy to learn more about your hiring plans and share what we're seeing in the market.</div>"
+        },
+        {
+          "variation": "G",
+          "name": "Version 7 - Founder-Friendly",
+          "subject": "{{first_name}}",
+          "body": "<div>{{first_name}},</div><div><br></div><div>building a great {{custom_company_type}} team usually comes down to finding the right {{custom_talent_type}} talent before everyone else does.</div><div><br></div><div>We've been seeing candidates with experience around {{custom_teaser}} become increasingly sought after.</div><div><br></div><div>Worth a quick conversation?</div>"
+        },
+        {
+          "variation": "H",
+          "name": "Version 8 - Simple",
+          "subject": "{{first_name}}",
+          "body": "<div>{{first_name}},</div><div><br></div><div>looks like you're building {{custom_company_type}}.</div><div><br></div><div>Out of curiosity, how difficult is it to find strong {{custom_talent_type}} talent with experience like {{custom_teaser}}?</div><div><br></div><div>Happy to jump on a quick call and share what we're seeing across the market.</div>"
+        }
+      ]
+    }
+  ],
+  "first_wait_time": 0,
+  "opportunity_val": 0,
+  "is_pause_on_bouncerate": "yes",
+  "bounce_rate_limit": 2,
+  "send_as_txt": "yes",
+  "stop_on_lead_replied": "yes",
+  "is_emailopened_tracking": "no",
+  "is_unsubscribed_link": "no",
+  "exclude_ooo": "yes",
+  "is_acc_based_sending": "no",
+  "send_risky_email": "no",
+  "unsub_blocklist": "no",
+  "other_email_acc": "no",
+  "is_esp_match": "no",
+  "send_priority": 0.5,
+  "schedules": [
+    {
+      "daily_limit": 1000,
+      "start_date": "2026-06-05",
+      "end_date": "",
+      "days": {
+        "1": true,
+        "2": true,
+        "3": true,
+        "4": true,
+        "5": true
+      },
+      "timezone": "America/New_York",
+      "timing": {
+        "from": "10:00",
+        "to": "16:30"
+      }
+    }
+  ]
+}
