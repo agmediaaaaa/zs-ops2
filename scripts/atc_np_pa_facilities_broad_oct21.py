@@ -656,24 +656,32 @@ def run_pull(
     no_li = 0
     tam = None
 
+    prior_ready_rows: list[dict] = []
+    done_li: set[str] = set()
     if resume_pulled:
         pulled_rows = json.loads(Path(resume_pulled).read_text())
         print(f"=== RESUME from {resume_pulled} n={len(pulled_rows)} (skip Icypeas search) ===")
-        # Load any prior ready checkpoint emails so we don't re-upload duplicates.
-        ck_ready = OUT_DIR / "checkpoint-ready.json"
-        if ck_ready.exists():
-            prior = json.loads(ck_ready.read_text())
+        # Load any prior ready checkpoint so we don't re-Blitz / re-upload.
+        for path in (OUT_DIR / "checkpoint-ready.json", OUT_DIR / "salvaged-ready.json"):
+            if not path.exists():
+                continue
+            prior = json.loads(path.read_text())
             for r in prior:
                 el = (r.get("email") or "").lower().strip()
                 if el:
                     seen_email.add(el)
-            print(f"  prior ready emails in seen_email: {len(prior)}")
-        salvaged = OUT_DIR / "salvaged-ready.json"
-        if salvaged.exists():
-            for r in json.loads(salvaged.read_text()):
-                el = (r.get("email") or "").lower().strip()
-                if el:
-                    seen_email.add(el)
+                li = norm_li(r.get("person_linkedin") or "")
+                if li:
+                    done_li.add(li)
+                if el and li and r not in prior_ready_rows:
+                    prior_ready_rows.append(r)
+            print(f"  loaded prior from {path.name}: rows={len(prior)}")
+        # de-dupe prior_ready by email
+        dedup: dict[str, dict] = {}
+        for r in prior_ready_rows:
+            dedup[(r.get("email") or "").lower().strip()] = r
+        prior_ready_rows = list(dedup.values())
+        print(f"  prior ready seeded={len(prior_ready_rows)} done_li={len(done_li)}")
     else:
         print("=== FREE TAM ===")
         tam = pay("icypeas.people.search.count", {"query": query}).get("total") or 0
@@ -738,8 +746,8 @@ def run_pull(
         print(f"  checkpoint-pulled.json n={len(pulled_rows)}")
 
     print(f"=== BLITZ email.find on pulled={len(pulled_rows)} (not until-N-ready) ===")
-    ready: list[dict] = []
-    attempts = hits = freemail = no_desc = 0
+    ready: list[dict] = list(prior_ready_rows)
+    attempts = hits = freemail = no_desc = skip_done_li = 0
     cols_ckpt = [
         "name",
         "job_title",
@@ -779,6 +787,12 @@ def run_pull(
             print("  stop: hard cap")
             break
         li = norm_li(L.get("profileUrl") or "")
+        if not li:
+            no_li += 1
+            continue
+        if li in done_li:
+            skip_done_li += 1
+            continue
         attempts += 1
         try:
             eout = pay("blitzapi.people.email.find", {"person_linkedin_url": L.get("profileUrl")})
@@ -789,8 +803,16 @@ def run_pull(
             print(f"  stop/email transport: {e}")
             flush_ready_ckpt()
             break
+        done_li.add(li)
         email = extract_email(eout if isinstance(eout, dict) else {})
         if not email:
+            if attempts % 50 == 0:
+                flush_ready_ckpt()
+                print(
+                    f"  progress attempts={attempts} ready={len(ready)} "
+                    f"hits={hits} freemail={freemail} no_desc={no_desc} "
+                    f"skip_done_li={skip_done_li} spend=${spend_micro/1e6:.4f}"
+                )
             continue
         el = email.lower().strip()
         if el in seen_email:
@@ -820,16 +842,18 @@ def run_pull(
             "company_linkedin": L.get("lastCompanyUrl"),
         }
         ready.append(row)
-        print(f"  ✓ {row['name']} <{email}> @ {row['company_name']}  [${spend_micro/1e6:.4f}]")
+        print(f"  ✓ {row['name']} <{email}> @ {row['company_name']}  [${spend_micro/1e6:.4f}]", flush=True)
         if len(ready) % 5 == 0:
             flush_ready_ckpt()
-            print(f"  checkpoint-ready n={len(ready)} spend=${spend_micro/1e6:.4f}")
+            print(f"  checkpoint-ready n={len(ready)} spend=${spend_micro/1e6:.4f}", flush=True)
         time.sleep(0.08)
         if attempts % 50 == 0:
             flush_ready_ckpt()
             print(
                 f"  progress attempts={attempts} ready={len(ready)} "
-                f"hits={hits} freemail={freemail} no_desc={no_desc} spend=${spend_micro/1e6:.4f}"
+                f"hits={hits} freemail={freemail} no_desc={no_desc} "
+                f"skip_done_li={skip_done_li} spend=${spend_micro/1e6:.4f}",
+                flush=True,
             )
     flush_ready_ckpt()
 
