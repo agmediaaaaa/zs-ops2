@@ -347,6 +347,8 @@ def build_query(domain_exclude: list[str] | None = None) -> dict:
 
 
 def call(endpoint: str, body: dict | None = None, retries: int = 5) -> tuple[dict, int]:
+    import socket
+
     data = None if body is None else json.dumps(body).encode()
     hdrs = {"X-Treg-Token": TOKEN, "Accept": "application/json"}
     if body is not None:
@@ -356,6 +358,8 @@ def call(endpoint: str, body: dict | None = None, retries: int = 5) -> tuple[dic
         hdrs["X-Treg-Route-Waterfall"] = "0"
         hdrs["X-Treg-Route-Exclude"] = "aiark,icypeas"
     last_err: Exception | None = None
+    # Avoid indefinite DNS hangs that bypass urllib's timeout on some resolvers.
+    socket.setdefaulttimeout(60)
     for attempt in range(retries):
         req = urllib.request.Request(
             f"https://treg.to/call/{endpoint}",
@@ -364,7 +368,7 @@ def call(endpoint: str, body: dict | None = None, retries: int = 5) -> tuple[dic
             headers=hdrs,
         )
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 cost = int(resp.headers.get("X-Treg-Cost-Micro") or 0)
                 raw = resp.read()
                 out = json.loads(raw.decode()) if raw else {}
@@ -600,14 +604,23 @@ def upload_supabase(rows: list[dict], report: dict) -> dict:
     }
 
 
-def run_pull(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bool) -> None:
+def run_pull(
+    pull: int,
+    hard_cap: float,
+    exclude_path: str | None,
+    do_upload: bool,
+    resume_pulled: str | None = None,
+    spend_already: float = 0.0,
+) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     started = datetime.now(timezone.utc).isoformat()
     excl_emails, excl_li, excl_domains = load_exclude(exclude_path)
     seen_li = set(excl_li)
     seen_email = set(excl_emails)
-    spend_micro = 0
+    spend_micro = int(round(max(spend_already, 0.0) * 1e6))
     query = build_query(excl_domains)
+    if spend_micro:
+        print(f"Resuming with spend_already=${spend_already:.4f} (micro={spend_micro})")
 
     def pay(endpoint: str, body: dict | None = None) -> dict:
         nonlocal spend_micro
@@ -636,72 +649,93 @@ def run_pull(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bo
         return out
 
     print(f"Exclude: emails={len(excl_emails)} linkedin={len(excl_li)} domains={len(excl_domains)}")
-    print("=== FREE TAM ===")
-    tam = pay("icypeas.people.search.count", {"query": query}).get("total") or 0
-    print(f"  TAM={tam:,}")
-
-    # Pull-N: fetch exactly `pull` people (after safety-net title/emp + LI skip), then enrich that batch only.
     pulled_rows: list[dict] = []
     searched = 0
     skipped_known = 0
     title_emp_fail = 0
     no_li = 0
-    token = None
-    page_size = min(100, max(25, min(pull, 100)))
-    # High skip rates (known LI/domain) need many more search pages than pull/page_size.
-    max_pages = max(50, (pull * 4) // page_size + 20)
+    tam = None
 
-    print(f"=== PULL-N search pull={pull} page_size={page_size} max_pages={max_pages} ===")
-    for _ in range(max_pages):
-        if len(pulled_rows) >= pull:
-            break
-        need = pull - len(pulled_rows)
-        size = min(page_size, max(need * 2, need))  # slight overfetch for skips
-        body: dict = {"query": query, "pagination": {"size": size}}
-        if token:
-            body["pagination"]["token"] = token
-        try:
-            out = pay("icypeas.people.search", body)
-        except RuntimeError as e:
-            print(f"  stop/search: {e}")
-            break
-        leads = out.get("leads") or []
-        searched += len(leads)
-        if not leads:
-            break
-        for L in leads:
+    if resume_pulled:
+        pulled_rows = json.loads(Path(resume_pulled).read_text())
+        print(f"=== RESUME from {resume_pulled} n={len(pulled_rows)} (skip Icypeas search) ===")
+        # Load any prior ready checkpoint emails so we don't re-upload duplicates.
+        ck_ready = OUT_DIR / "checkpoint-ready.json"
+        if ck_ready.exists():
+            prior = json.loads(ck_ready.read_text())
+            for r in prior:
+                el = (r.get("email") or "").lower().strip()
+                if el:
+                    seen_email.add(el)
+            print(f"  prior ready emails in seen_email: {len(prior)}")
+        salvaged = OUT_DIR / "salvaged-ready.json"
+        if salvaged.exists():
+            for r in json.loads(salvaged.read_text()):
+                el = (r.get("email") or "").lower().strip()
+                if el:
+                    seen_email.add(el)
+    else:
+        print("=== FREE TAM ===")
+        tam = pay("icypeas.people.search.count", {"query": query}).get("total") or 0
+        print(f"  TAM={tam:,}")
+
+        # Pull-N: fetch exactly `pull` people (after safety-net title/emp + LI skip), then enrich that batch only.
+        token = None
+        page_size = min(100, max(25, min(pull, 100)))
+        # High skip rates (known LI/domain) need many more search pages than pull/page_size.
+        max_pages = max(50, (pull * 4) // page_size + 20)
+
+        print(f"=== PULL-N search pull={pull} page_size={page_size} max_pages={max_pages} ===")
+        for _ in range(max_pages):
             if len(pulled_rows) >= pull:
                 break
-            title = L.get("lastJobTitle") or L.get("headline") or ""
-            if not title_ok(title) or not emp_ok(L.get("lastCompanySize")):
-                title_emp_fail += 1
-                continue
-            li = norm_li(L.get("profileUrl") or "")
-            if not li:
-                no_li += 1
-                continue
-            if li in seen_li:
-                skipped_known += 1
-                continue
-            # domain skip (safety beyond in-query)
-            host = bare_host(L.get("lastCompanyWebsite") or "")
-            if host and host in set(excl_domains):
-                skipped_known += 1
-                continue
-            seen_li.add(li)
-            pulled_rows.append(L)
-        token = (out.get("pagination") or {}).get("token")
-        print(
-            f"  page searched+= {len(leads)} pulled={len(pulled_rows)}/{pull} "
-            f"skipped_known={skipped_known} spend=${spend_micro/1e6:.4f}"
-        )
-        if not token:
-            break
-        time.sleep(0.15)
+            need = pull - len(pulled_rows)
+            size = min(page_size, max(need * 2, need))  # slight overfetch for skips
+            body: dict = {"query": query, "pagination": {"size": size}}
+            if token:
+                body["pagination"]["token"] = token
+            try:
+                out = pay("icypeas.people.search", body)
+            except RuntimeError as e:
+                print(f"  stop/search: {e}")
+                break
+            leads = out.get("leads") or []
+            searched += len(leads)
+            if not leads:
+                break
+            for L in leads:
+                if len(pulled_rows) >= pull:
+                    break
+                title = L.get("lastJobTitle") or L.get("headline") or ""
+                if not title_ok(title) or not emp_ok(L.get("lastCompanySize")):
+                    title_emp_fail += 1
+                    continue
+                li = norm_li(L.get("profileUrl") or "")
+                if not li:
+                    no_li += 1
+                    continue
+                if li in seen_li:
+                    skipped_known += 1
+                    continue
+                # domain skip (safety beyond in-query)
+                host = bare_host(L.get("lastCompanyWebsite") or "")
+                if host and host in set(excl_domains):
+                    skipped_known += 1
+                    continue
+                seen_li.add(li)
+                pulled_rows.append(L)
+            token = (out.get("pagination") or {}).get("token")
+            print(
+                f"  page searched+= {len(leads)} pulled={len(pulled_rows)}/{pull} "
+                f"skipped_known={skipped_known} spend=${spend_micro/1e6:.4f}"
+            )
+            if not token:
+                break
+            time.sleep(0.15)
 
-    # Checkpoint pulled batch so a mid-Blitz crash can resume without re-search.
-    (OUT_DIR / "checkpoint-pulled.json").write_text(json.dumps(pulled_rows))
-    print(f"  checkpoint-pulled.json n={len(pulled_rows)}")
+        # Checkpoint pulled batch so a mid-Blitz crash can resume without re-search.
+        (OUT_DIR / "checkpoint-pulled.json").write_text(json.dumps(pulled_rows))
+        print(f"  checkpoint-pulled.json n={len(pulled_rows)}")
 
     print(f"=== BLITZ email.find on pulled={len(pulled_rows)} (not until-N-ready) ===")
     ready: list[dict] = []
@@ -787,17 +821,24 @@ def run_pull(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bo
         }
         ready.append(row)
         print(f"  ✓ {row['name']} <{email}> @ {row['company_name']}  [${spend_micro/1e6:.4f}]")
-        if len(ready) % 25 == 0:
+        if len(ready) % 5 == 0:
             flush_ready_ckpt()
             print(f"  checkpoint-ready n={len(ready)} spend=${spend_micro/1e6:.4f}")
         time.sleep(0.08)
+        if attempts % 50 == 0:
+            flush_ready_ckpt()
+            print(
+                f"  progress attempts={attempts} ready={len(ready)} "
+                f"hits={hits} freemail={freemail} no_desc={no_desc} spend=${spend_micro/1e6:.4f}"
+            )
     flush_ready_ckpt()
 
     spend = spend_micro / 1e6
     pulled_n = len(pulled_rows)
     ready_n = len(ready)
-    expected = pull * 0.00038 + pull * 0.45 * 0.000495
-    max_usd = pull * 0.00038 + pull * 0.000495
+    pull_for_quote = pull or pulled_n
+    expected = pull_for_quote * 0.00038 + pull_for_quote * 0.45 * 0.000495
+    max_usd = pull_for_quote * 0.00038 + pull_for_quote * 0.000495
     report = {
         "started_at": started,
         "at": datetime.now(timezone.utc).isoformat(),
@@ -812,6 +853,8 @@ def run_pull(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bo
         "variance_usd": round(spend - expected, 6),
         "tam": tam,
         "pulled": pulled_n,
+        "resumed_from": resume_pulled,
+        "spend_already_usd": spend_already,
         "searched_rows": searched,
         "skipped_known": skipped_known,
         "title_emp_fail": title_emp_fail,
@@ -893,15 +936,34 @@ def main() -> None:
     ap.add_argument("--confirm-spend", type=float, default=None)
     ap.add_argument("--exclude-json", type=str, default=None)
     ap.add_argument("--upload-supabase", action="store_true")
+    ap.add_argument(
+        "--resume-pulled",
+        type=str,
+        default=None,
+        help="Path to checkpoint-pulled.json — skip Icypeas search, Blitz only",
+    )
+    ap.add_argument(
+        "--spend-already",
+        type=float,
+        default=0.0,
+        help="USD already spent this wave (counts against --confirm-spend)",
+    )
     args = ap.parse_args()
     if args.scope_only:
         scope_only(args.exclude_json)
         return
-    if args.pull:
+    if args.pull or args.resume_pulled:
         if args.confirm_spend is None:
             print("Paid run requires --confirm-spend USD", file=sys.stderr)
             sys.exit(2)
-        run_pull(args.pull, args.confirm_spend, args.exclude_json, args.upload_supabase)
+        run_pull(
+            args.pull or 0,
+            args.confirm_spend,
+            args.exclude_json,
+            args.upload_supabase,
+            resume_pulled=args.resume_pulled,
+            spend_already=args.spend_already,
+        )
         return
     ap.print_help()
     sys.exit(2)
