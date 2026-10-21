@@ -1,0 +1,83 @@
+{
+  "subject": "{{first_name}}",
+  "workspace": "Healthscope Services",
+  "workspace_id": "6a1334c74be1e70c4918deab",
+  "campaign_id": "6a3128c4bfcb0d66add3f8fd",
+  "campaign_name": "v3 Outcome Outreach",
+  "source": "Deployed to PlusVibe campaign v3 Outcome Outreach (6a3128c4bfcb0d66add3f8fd)",
+  "custom_variables_used": ["{{custom_company_type}}", "{{first_name}}", "{{company_name}}"],
+  "variations": [
+    {
+      "variation": "A",
+      "name": "A Backlog",
+      "angle": "Outcome: denied submissions and aging accounts worked daily",
+      "paragraphs": [
+        "{{first_name}}, most {{custom_company_type}} are leaving money in denied submissions and aging accounts nobody has time to rework.",
+        "We work through that backlog every day so it stops sitting on your team's desk.",
+        "Worth a short call?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
+      ]
+    },
+    {
+      "variation": "B",
+      "name": "B Visibility",
+      "angle": "Outcome: clear the pile without stretching current team",
+      "paragraphs": [
+        "{{first_name}}, honest question — do you know how much is sitting in denied submissions and aging accounts at {{company_name}}?",
+        "We help {{custom_company_type}} clear that pile without your current team taking on more.",
+        "Worth a look?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
+      ]
+    },
+    {
+      "variation": "C",
+      "name": "C Admin Overhead",
+      "angle": "Outcome: scheduling, intake, follow-up handled at lower labor cost",
+      "paragraphs": [
+        "{{first_name}}, admin overhead is the hardest line item for most {{custom_company_type}} to keep flat as patient volume grows.",
+        "We handle scheduling, intake, credentialing, and account follow-up at roughly half the labor cost of adding someone locally — your processes stay the same.",
+        "Want to hear how that works for a practice like yours?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
+      ]
+    },
+    {
+      "variation": "D",
+      "name": "D Stretched Teams",
+      "angle": "Outcome: admin tasks taken off overloaded team",
+      "paragraphs": [
+        "{{first_name}}, your admin team is probably doing the work of two people.",
+        "We take scheduling, intake, documentation, and account follow-up off their plate so they can focus on patients again.",
+        "Is that something you're looking at this year?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
+      ]
+    },
+    {
+      "variation": "E",
+      "name": "E Before You Hire",
+      "angle": "Outcome: same admin work covered without another local hire",
+      "paragraphs": [
+        "{{first_name}}, when admin work piles up, most {{custom_company_type}} look at hiring another person locally.",
+        "We handle that same admin workload at roughly half the labor cost — without you posting another job.",
+        "Worth a conversation?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
+      ]
+    },
+    {
+      "variation": "F",
+      "name": "F Bandwidth",
+      "angle": "Outcome: paperwork and scheduling off nurses and front desk",
+      "paragraphs": [
+        "{{first_name}}, your nurses and front desk shouldn't spend their day on scheduling, credentialing, intake, and paperwork.",
+        "We take that work off them so they stay focused on patients.",
+        "Curious how other practices are handling it?",
+        "{{random|If not relevant, just reply no and I will not follow up|Not relevant? Just reply no and I will not follow up}}",
+        "{{random|- {{sender_first_name}} {{sender_last_name}}|- {{sender_first_name}}}"
+      ]
+    }
+  ]
+}
