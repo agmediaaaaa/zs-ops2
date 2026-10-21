@@ -709,6 +709,181 @@ def run_pull(
     return report
 
 
+def run_blitz_from_candidates(
+    candidates_path: str,
+    hard_cap: float,
+    exclude_path: str | None,
+    seed_ready_paths: list[str] | None = None,
+) -> dict:
+    """Resume Blitz on a saved candidates JSON without re-paying Icypeas search."""
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    excl_emails, excl_li, _ = load_exclude(exclude_path)
+    seen_email = set(excl_emails)
+    seen_li = set(excl_li)
+    ready: list[dict] = []
+
+    # Seed prior ready rows (wave1 / partial) into output + skip sets
+    for sp in seed_ready_paths or []:
+        p = Path(sp)
+        if not p.exists():
+            continue
+        data = json.loads(p.read_text())
+        rows = data if isinstance(data, list) else (data.get("rows") or [])
+        for r in rows:
+            if r.get("email"):
+                seen_email.add(r["email"].lower())
+            if r.get("person_linkedin"):
+                seen_li.add(norm_li(r["person_linkedin"]))
+            ready.append(r)
+        print(f"Seeded {len(rows)} ready from {p}")
+
+    blob = json.loads(Path(candidates_path).read_text())
+    candidates = blob.get("candidates") or []
+    search_rows = int(blob.get("search_rows") or len(candidates))
+    prior_search_spend = float(blob.get("search_spend_usd") or 0.0)
+    tam = blob.get("tam") or {}
+    spend_micro = 0  # this resume's Blitz-only spend
+    email_attempts = email_hits = freemail = skipped_known = no_desc = 0
+
+    def pay(endpoint: str, body: dict) -> dict:
+        nonlocal spend_micro
+        if spend_micro / 1e6 >= hard_cap:
+            raise RuntimeError(f"hard cap ${hard_cap} reached")
+        if spend_micro / 1e6 + 0.000495 > hard_cap:
+            raise RuntimeError(f"hard cap ${hard_cap} would be exceeded by next Blitz success")
+        out, cost = call(endpoint, body)
+        spend_micro += cost
+        if spend_micro / 1e6 > hard_cap:
+            raise RuntimeError(f"hard cap ${hard_cap} exceeded (spent ${spend_micro/1e6:.4f})")
+        return out
+
+    ready_jsonl = OUT_DIR / "volume-ready.jsonl"
+    # rewrite jsonl from seed
+    with open(ready_jsonl, "w") as jf:
+        for r in ready:
+            jf.write(json.dumps(r) + "\n")
+
+    print(
+        f"Blitz resume: candidates={len(candidates)} seeded_ready={len(ready)} "
+        f"hard_cap=${hard_cap} prior_search_spend=${prior_search_spend:.4f}"
+    )
+    for i, L in enumerate(candidates, 1):
+        li = norm_li(L.get("profileUrl") or "")
+        if not li or li in seen_li:
+            skipped_known += 1
+            continue
+        seen_li.add(li)
+        desc = (L.get("lastCompanyDescription") or "").strip()
+        if not desc:
+            no_desc += 1
+            continue
+        try:
+            eout = pay("blitzapi.people.email.find", {"person_linkedin_url": L["profileUrl"]})
+        except (RuntimeError, urllib.error.HTTPError, urllib.error.URLError) as e:
+            print(f"  stop/email: {e}")
+            break
+        email_attempts += 1
+        email = eout.get("email") if isinstance(eout, dict) else None
+        if not email and isinstance(eout, dict):
+            for item in eout.get("all_emails") or []:
+                if isinstance(item, dict) and item.get("email"):
+                    email = item["email"]
+                    break
+        if not email:
+            if i % 100 == 0:
+                print(
+                    f"  … {i}/{len(candidates)} attempts={email_attempts} "
+                    f"ready={len(ready)} spend=${spend_micro/1e6:.4f}"
+                )
+            continue
+        el = email.lower().strip()
+        if el in seen_email:
+            skipped_known += 1
+            continue
+        if any(el.endswith("@" + d) for d in FREEMAIL):
+            freemail += 1
+            continue
+        seen_email.add(el)
+        email_hits += 1
+        row = {
+            "slice": L.get("_slice"),
+            "name": f"{L.get('firstname') or ''} {L.get('lastname') or ''}".strip(),
+            "job_title": L.get("lastJobTitle") or L.get("headline"),
+            "employee_count": L.get("lastCompanySize"),
+            "company_desc": desc[:500],
+            "email": email,
+            "location": L.get("address") or L.get("lastCompanyAddress"),
+            "company_name": L.get("lastCompanyName"),
+            "company_website": L.get("lastCompanyWebsite"),
+            "company_industry": L.get("lastCompanyIndustry"),
+            "person_linkedin": li,
+            "company_linkedin": L.get("lastCompanyUrl"),
+        }
+        ready.append(row)
+        with open(ready_jsonl, "a") as jf:
+            jf.write(json.dumps(row) + "\n")
+        if len(ready) <= 5 or len(ready) % 50 == 0 or i == len(candidates):
+            print(
+                f"  ✓ [{len(ready)}] {row['name']} <{email}> @ {row['company_name']} "
+                f"(blitz_spend=${spend_micro/1e6:.4f})"
+            )
+        if email_attempts >= 100 and email_hits >= 50:
+            epr = email_attempts / max(email_hits, 1)
+            hit = email_hits / email_attempts
+            if epr > 4 or hit < 0.15:
+                print(f"  EARLY-STOP bad email econ: att/hit={epr:.1f} hit_rate={hit:.3f}")
+                break
+        time.sleep(0.05)
+
+    blitz_spend = spend_micro / 1e6
+    total_spend = prior_search_spend + blitz_spend
+    # Approximate combined campaign spend (wave1 search+blitz not fully known here)
+    ready_n = len(ready)
+    pulled = len(candidates)
+    report = {
+        "client": "MARS",
+        "path": "icypeas.people.search → blitzapi.people.email.find",
+        "mode": "blitz_from_candidates",
+        "at": datetime.now(timezone.utc).isoformat(),
+        "hard_cap_usd": hard_cap,
+        "blitz_spend_usd": round(blitz_spend, 6),
+        "prior_search_spend_usd": prior_search_spend,
+        "spend_usd": round(total_spend, 6),
+        "pull_target": blob.get("pull_target"),
+        "pulled": pulled,
+        "search_rows": search_rows,
+        "skipped_known": skipped_known,
+        "no_company_desc": no_desc,
+        "email_attempts": email_attempts,
+        "email_hits": email_hits,
+        "freemail_drop": freemail,
+        "ready": ready_n,
+        "coverage": round(ready_n / pulled, 3) if pulled else 0.0,
+        "tam": tam,
+        "unit_economics": {
+            "rows_per_ready": round(search_rows / ready_n, 2) if ready_n else None,
+            "email_attempts_per_ready": round(email_attempts / max(email_hits, 1), 2) if email_hits else None,
+            "cost_per_1k_ready_usd": round(total_spend / ready_n * 1000, 2) if ready_n else None,
+            "blitz_hit_rate": round(email_hits / email_attempts, 3) if email_attempts else None,
+        },
+        "rows": ready,
+    }
+    cols = [
+        "slice", "name", "job_title", "employee_count", "company_desc", "email", "location",
+        "company_name", "company_website", "company_industry", "person_linkedin", "company_linkedin",
+    ]
+    with open(OUT_DIR / "volume-ready.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(ready)
+    (OUT_DIR / "volume-report.json").write_text(json.dumps(report, indent=2))
+    print(f"Wrote volume-ready.csv / volume-report.json ready={ready_n} blitz_spend=${blitz_spend:.4f}")
+    print(json.dumps({k: report[k] for k in (
+        "spend_usd", "blitz_spend_usd", "pulled", "ready", "coverage", "unit_economics"
+    )}, indent=2))
+    return report
+
+
 def scope_only(exclude_path: str | None, max_domains: int) -> None:
     _, _, domains = load_exclude(exclude_path)
     print("=== FREE TAM (icypeas.people.search.count) — MARS broad ===")
@@ -761,6 +936,17 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="MARS Icypeas→Blitz scrape")
     ap.add_argument("--scope-only", action="store_true")
     ap.add_argument("--pull", type=int, default=0, help="Pull-N people from Icypeas (enrich that batch only)")
+    ap.add_argument(
+        "--blitz-from-candidates",
+        default="",
+        help="Resume Blitz from saved volume-candidates.json (no Icypeas search)",
+    )
+    ap.add_argument(
+        "--seed-ready",
+        action="append",
+        default=[],
+        help="Prior ready JSON report(s) to merge/skip (e.g. volume-report-wave1.json)",
+    )
     ap.add_argument("--confirm-spend", type=float, default=0.0)
     ap.add_argument("--exclude-json", default="")
     ap.add_argument(
@@ -779,6 +965,18 @@ def main() -> None:
 
     if args.scope_only:
         scope_only(args.exclude_json or None, args.max_domains)
+        return
+
+    if args.blitz_from_candidates:
+        if args.confirm_spend <= 0:
+            print("Refusing paid run without --confirm-spend <USD>", file=sys.stderr)
+            sys.exit(2)
+        run_blitz_from_candidates(
+            candidates_path=args.blitz_from_candidates,
+            hard_cap=args.confirm_spend,
+            exclude_path=args.exclude_json or None,
+            seed_ready_paths=args.seed_ready,
+        )
         return
 
     if args.pull > 0:
