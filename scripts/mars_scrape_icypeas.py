@@ -722,7 +722,8 @@ def run_blitz_from_candidates(
     seen_li = set(excl_li)
     ready: list[dict] = []
 
-    # Seed prior ready rows (wave1 / partial) into output + skip sets
+    # Seed prior ready rows into OUTPUT + skip sets (even if already in exclude.json)
+    already_ready = {(r.get("email") or "").lower() for r in ready if r.get("email")}
     for sp in seed_ready_paths or []:
         p = Path(sp)
         if not p.exists():
@@ -733,10 +734,11 @@ def run_blitz_from_candidates(
         for r in rows:
             em = (r.get("email") or "").lower().strip()
             li = norm_li(r.get("person_linkedin") or "")
-            if em and em in seen_email:
+            if em and em in already_ready:
                 continue
             if em:
                 seen_email.add(em)
+                already_ready.add(em)
             if li:
                 seen_li.add(li)
             ready.append(r)
