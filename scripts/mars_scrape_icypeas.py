@@ -128,6 +128,14 @@ TITLE_EXCLUDE_KEEP_VP_OPS = [
     "VP of Marketing",
     "VP of Engineering",
     "Vice President of Engineering",
+    # Pilot soft-miss tighten (Cost Accounting Ops Mgr, Auctions SVP, etc.)
+    "Accounting",
+    "Cost Accounting",
+    "Auction",
+    "Auctions",
+    "Appraisal",
+    "Product Development",
+    "Supply Chain",
 ]
 
 INDUSTRIES = [
@@ -146,7 +154,7 @@ INDUSTRIES = [
     "Computers and Electronics Manufacturing",
     "Semiconductor Manufacturing",
     "Medical Equipment Manufacturing",
-    "Manufacturing",
+    # Dropped bare "Manufacturing" — let food/gaming/general mfg bleed through pilot
 ]
 
 INDUSTRY_EXCLUDE = [
@@ -157,6 +165,11 @@ INDUSTRY_EXCLUDE = [
     "Retail",
     "Software Development",
     "IT Services and IT Consulting",
+    "Food and Beverage Manufacturing",
+    "Food Production",
+    "Food & Beverages",
+    "Restaurants",
+    "Gambling Facilities and Casinos",
 ]
 
 KEYWORDS_INCLUDE = [
@@ -192,6 +205,25 @@ KEYWORDS_EXCLUDE = [
     "non-profit",
     "3D printing service",
     "marketplace",
+    # Pilot soft-miss tighten
+    "auction",
+    "appraisal",
+    "liquidation",
+    "asset disposition",
+    "capital recovery",
+    "food",
+    "beverage",
+    "nutrition",
+    "dessert",
+    "restaurant",
+    "gaming",
+    "bingo",
+    "pull tabs",
+    "charitable gaming",
+    "used equipment",
+    "used machinery",
+    "used injection",
+    "buying and selling",
 ]
 
 
@@ -307,28 +339,37 @@ FREEMAIL = ("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com"
 def title_ok(title: str) -> bool:
     """Safety net — ICP titles only; allow VP Ops / VP Manufacturing."""
     t = (title or "").lower()
-    if any(
-        x in t
-        for x in (
-            "assistant",
-            "intern",
-            "student",
-            "recruit",
-            "sales",
-            "marketing",
-            "machinist",
-            "technician",
-            "purchasing",
-            "buyer",
-            "cfo",
-            "cto",
-        )
-    ):
-        if "vp of operations" not in t and "vp manufacturing" not in t and "vice president of operations" not in t:
-            if any(x in t for x in ("assistant", "intern", "student", "recruit", "machinist", "technician", "purchasing", "buyer", "cfo", "cto")):
-                return False
-            if "sales" in t or "marketing" in t:
-                return False
+    hard_reject = (
+        "assistant",
+        "intern",
+        "student",
+        "recruit",
+        "sales",
+        "marketing",
+        "machinist",
+        "technician",
+        "purchasing",
+        "buyer",
+        "cfo",
+        "cto",
+        "accounting",
+        "auction",
+        "appraisal",
+        "product development",
+        "supply chain",
+    )
+    if any(x in t for x in hard_reject):
+        # still allow pure VP Ops / VP Mfg if somehow combined (rare)
+        if not (
+            ("vp of operations" in t or "vice president of operations" in t or "vp manufacturing" in t
+             or "vice president of manufacturing" in t or "vp of manufacturing" in t)
+            and "sales" not in t
+            and "accounting" not in t
+            and "auction" not in t
+            and "supply chain" not in t
+            and "product development" not in t
+        ):
+            return False
     needles = (
         "owner",
         "founder",
