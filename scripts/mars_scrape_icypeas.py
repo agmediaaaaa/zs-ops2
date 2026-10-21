@@ -465,8 +465,9 @@ def run_pull(
         print(f"  {sl['id']}: {tam[sl['id']]:,}")
         time.sleep(0.5)
 
-    # Pull fixed N people (not until N ready)
-    page_size = min(50, pull)
+    # Pull fixed N people (not until N ready). Icypeas pagination.size max 200.
+    page_size = min(200, max(pull, 25))
+    max_pages = max(30, (pull // 50) + 40)  # enough headroom for known-LI skips
     candidates: list[dict] = []
     for sl in active:
         if len(candidates) >= pull:
@@ -474,9 +475,20 @@ def run_pull(
         q = with_domain_exclude(sl["query"], excl_domains, max_domains)
         token = None
         pages = 0
-        while len(candidates) < pull and pages < 6:
+        while len(candidates) < pull and pages < max_pages:
             need = pull - len(candidates)
-            size = min(page_size, max(need, 10))
+            size = min(page_size, max(need, 25))
+            # keep budget for Blitz: leave room for ~need * blitz unit on successes
+            spend_now = spend_micro / 1e6
+            blitz_reserve = min(need, pull - len(candidates)) * 0.000495
+            if spend_now + size * 0.00038 + blitz_reserve > hard_cap:
+                # shrink page if possible
+                room = hard_cap - spend_now - blitz_reserve
+                size = max(0, int(room / 0.00038))
+                if size < 1:
+                    print(f"  stop/search: reserve for Blitz would exceed cap (spend=${spend_now:.4f})")
+                    break
+                size = min(size, page_size, need)
             body: dict = {"query": q, "pagination": {"size": size}}
             if token:
                 body["pagination"]["token"] = token
@@ -510,14 +522,18 @@ def run_pull(
                 row["_slice"] = sl["id"]
                 candidates.append(row)
             token = (out.get("pagination") or {}).get("token")
-            print(f"  {sl['id']} page={pages} searched={search_rows} candidates={len(candidates)}")
+            if pages % 2 == 0 or len(candidates) >= pull or not token:
+                print(
+                    f"  {sl['id']} page={pages} searched={search_rows} "
+                    f"candidates={len(candidates)} spend=${spend_micro/1e6:.4f}"
+                )
             if not token or not leads:
                 break
-            time.sleep(0.15)
+            time.sleep(0.12)
 
     pulled = len(candidates)
     print(f"\n=== Blitz email.find on {pulled} candidates (Pull-N) ===")
-    for L in candidates:
+    for i, L in enumerate(candidates, 1):
         if spend_micro / 1e6 >= hard_cap:
             print("  stop: hard cap")
             break
@@ -526,6 +542,10 @@ def run_pull(
         if not desc:
             no_desc += 1
             continue
+        # Blitz miss is free; only abort if we cannot afford one success
+        if spend_micro / 1e6 + 0.000495 > hard_cap:
+            print(f"  stop/email: remaining budget below one Blitz success (${spend_micro/1e6:.4f})")
+            break
         email_attempts += 1
         li = L["profileUrl"]
         try:
@@ -540,6 +560,8 @@ def run_pull(
                     email = item["email"]
                     break
         if not email:
+            if i % 50 == 0:
+                print(f"  … {i}/{pulled} attempts={email_attempts} ready={len(ready)} spend=${spend_micro/1e6:.4f}")
             continue
         el = email.lower().strip()
         if el in seen_email:
@@ -566,8 +588,23 @@ def run_pull(
                 "company_linkedin": L.get("lastCompanyUrl"),
             }
         )
-        print(f"  ✓ {ready[-1]['name']} <{email}> @ {ready[-1]['company_name']}")
-        time.sleep(0.08)
+        if len(ready) <= 5 or len(ready) % 25 == 0 or i == pulled:
+            print(
+                f"  ✓ [{len(ready)}] {ready[-1]['name']} <{email}> @ {ready[-1]['company_name']} "
+                f"(spend=${spend_micro/1e6:.4f})"
+            )
+        # early-stop if unit econ dies after a meaningful sample
+        if len(ready) >= 40:
+            rpr = search_rows / len(ready)
+            epr = email_attempts / len(ready)
+            cpk = (spend_micro / 1e6) / len(ready) * 1000
+            if rpr > 12 or epr > 4 or cpk > 10:
+                print(
+                    f"  EARLY-STOP bad unit econ: rows/ready={rpr:.1f} "
+                    f"email_att/ready={epr:.1f} $/1k={cpk:.2f}"
+                )
+                break
+        time.sleep(0.05)
 
     spend = spend_micro / 1e6
     ready_n = len(ready)
@@ -613,11 +650,15 @@ def run_pull(
         "person_linkedin",
         "company_linkedin",
     ]
-    with open(OUT_DIR / "pilot-ready.csv", "w", newline="") as f:
+    tag = "pilot" if pull <= 100 else "volume"
+    csv_path = OUT_DIR / f"{tag}-ready.csv"
+    report_path = OUT_DIR / f"{tag}-report.json"
+    with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
         w.writerows(ready)
-    (OUT_DIR / "pilot-report.json").write_text(json.dumps(report, indent=2))
+    (report_path).write_text(json.dumps(report, indent=2))
+    print(f"Wrote {csv_path} and {report_path}")
     print(json.dumps({k: report[k] for k in (
         "spend_usd", "pulled", "ready", "coverage", "unit_economics", "tam", "skipped_known", "freemail_drop", "no_company_desc"
     )}, indent=2))
