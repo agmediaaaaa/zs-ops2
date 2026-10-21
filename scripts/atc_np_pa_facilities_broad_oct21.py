@@ -36,7 +36,7 @@ TOKEN = (
 ) or os.environ.get("TREG_TOKEN") or os.environ.get("treg")
 
 OUT_DIR = Path(os.environ.get("OUT_DIR", "/workspace/artifacts/atc-np-pa-broad-oct21"))
-LIST_NAME = "ATC NP-PA Facilities Broad Oct 21"
+LIST_NAME = os.environ.get("ATC_LIST_NAME") or "ATC NP-PA Facilities Broad Oct 21"
 CLIENT = "ATC"
 SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "https://npkdhahdvilcctjwzdlf.supabase.co").strip()
 SUPABASE_KEY = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip().strip('"').strip("'")
@@ -256,6 +256,19 @@ KW_EXCLUDE = [
     "non-profit",
     "hospital system",
     "acute care hospital",
+    # Pilot junk (Oct 21)
+    "locum",
+    "locums",
+    "linen",
+    "laundry",
+    "medical equipment",
+    "genomics",
+    "marketing",
+    "advertising agency",
+    "trade association",
+    "membership association",
+    "health tech platform",
+    "digital health platform",
 ]
 
 COMPANY_NAME_EXCLUDE = [
@@ -272,6 +285,15 @@ COMPANY_NAME_EXCLUDE = [
     "Forward",
     "Carbon Health",
     "Optum",
+    # Pilot junk company names
+    "Censible Marketing",
+    "EcoBrite Linen",
+    "Medical Equipment Dynamics",
+    "UrologyLocums",
+    "Nurture Genomics",
+    "HealthEx",
+    "PeelAways",
+    "Reading2Connect",
 ]
 
 HARD_DOMAINS = [
@@ -574,6 +596,14 @@ def run_pull(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bo
                 raise RuntimeError(
                     f"hard cap ${hard_cap} would be exceeded by next page "
                     f"(projected ${projected:.4f} for size={size})"
+                )
+        if endpoint == "blitzapi.people.email.find":
+            # Blitz bills on success only; reserve worst-case success unit so we never overshoot cap.
+            projected = spend_micro / 1e6 + 0.000495
+            if projected > hard_cap:
+                raise RuntimeError(
+                    f"hard cap ${hard_cap} would be exceeded by next email.find "
+                    f"(projected ${projected:.4f})"
                 )
         out, cost = call(endpoint, body)
         spend_micro += cost
