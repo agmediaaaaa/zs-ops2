@@ -346,7 +346,7 @@ def build_query(domain_exclude: list[str] | None = None) -> dict:
     }
 
 
-def call(endpoint: str, body: dict | None = None) -> tuple[dict, int]:
+def call(endpoint: str, body: dict | None = None, retries: int = 5) -> tuple[dict, int]:
     data = None if body is None else json.dumps(body).encode()
     hdrs = {"X-Treg-Token": TOKEN, "Accept": "application/json"}
     if body is not None:
@@ -355,16 +355,40 @@ def call(endpoint: str, body: dict | None = None) -> tuple[dict, int]:
         hdrs["X-Treg-Route-Max-Cost"] = "0.01"
         hdrs["X-Treg-Route-Waterfall"] = "0"
         hdrs["X-Treg-Route-Exclude"] = "aiark,icypeas"
-    req = urllib.request.Request(
-        f"https://treg.to/call/{endpoint}",
-        data=data,
-        method="POST" if body is not None else "GET",
-        headers=hdrs,
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        cost = int(resp.headers.get("X-Treg-Cost-Micro") or 0)
-        raw = resp.read()
-        return (json.loads(raw.decode()) if raw else {}), cost
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        req = urllib.request.Request(
+            f"https://treg.to/call/{endpoint}",
+            data=data,
+            method="POST" if body is not None else "GET",
+            headers=hdrs,
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                cost = int(resp.headers.get("X-Treg-Cost-Micro") or 0)
+                raw = resp.read()
+                out = json.loads(raw.decode()) if raw else {}
+                # Floor costs when header under-reports (observed mid-run undercount vs ledger).
+                if endpoint == "icypeas.people.search":
+                    n = len(out.get("leads") or [])
+                    cost = max(cost, int(round(n * 380)))
+                if endpoint == "blitzapi.people.email.find":
+                    email = None
+                    if isinstance(out, dict):
+                        email = out.get("email")
+                        if not email:
+                            for item in out.get("all_emails") or []:
+                                if isinstance(item, dict) and item.get("email"):
+                                    email = item["email"]
+                                    break
+                    if email:
+                        cost = max(cost, 495)
+                return out, cost
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+            last_err = e
+            time.sleep(min(2**attempt, 20))
+    assert last_err is not None
+    raise last_err
 
 
 def norm_li(u: str) -> str:
@@ -623,10 +647,11 @@ def run_pull(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bo
     title_emp_fail = 0
     no_li = 0
     token = None
-    page_size = min(100, max(pull, 25))
-    max_pages = max(6, (pull // page_size) + 4)
+    page_size = min(100, max(25, min(pull, 100)))
+    # High skip rates (known LI/domain) need many more search pages than pull/page_size.
+    max_pages = max(50, (pull * 4) // page_size + 20)
 
-    print(f"=== PULL-N search pull={pull} page_size={page_size} ===")
+    print(f"=== PULL-N search pull={pull} page_size={page_size} max_pages={max_pages} ===")
     for _ in range(max_pages):
         if len(pulled_rows) >= pull:
             break
@@ -666,14 +691,55 @@ def run_pull(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bo
             seen_li.add(li)
             pulled_rows.append(L)
         token = (out.get("pagination") or {}).get("token")
-        print(f"  page searched+= {len(leads)} pulled={len(pulled_rows)}/{pull} skipped_known={skipped_known}")
+        print(
+            f"  page searched+= {len(leads)} pulled={len(pulled_rows)}/{pull} "
+            f"skipped_known={skipped_known} spend=${spend_micro/1e6:.4f}"
+        )
         if not token:
             break
         time.sleep(0.15)
 
+    # Checkpoint pulled batch so a mid-Blitz crash can resume without re-search.
+    (OUT_DIR / "checkpoint-pulled.json").write_text(json.dumps(pulled_rows))
+    print(f"  checkpoint-pulled.json n={len(pulled_rows)}")
+
     print(f"=== BLITZ email.find on pulled={len(pulled_rows)} (not until-N-ready) ===")
     ready: list[dict] = []
     attempts = hits = freemail = no_desc = 0
+    cols_ckpt = [
+        "name",
+        "job_title",
+        "employee_count",
+        "company_desc",
+        "email",
+        "location",
+        "company_name",
+        "company_website",
+        "company_industry",
+        "person_linkedin",
+        "company_linkedin",
+    ]
+
+    def flush_ready_ckpt() -> None:
+        with open(OUT_DIR / "checkpoint-ready.csv", "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=cols_ckpt, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(ready)
+        (OUT_DIR / "checkpoint-ready.json").write_text(json.dumps(ready))
+        (OUT_DIR / "checkpoint-meta.json").write_text(
+            json.dumps(
+                {
+                    "spend_usd": round(spend_micro / 1e6, 6),
+                    "ready": len(ready),
+                    "attempts": attempts,
+                    "hits": hits,
+                    "pulled": len(pulled_rows),
+                    "searched": searched,
+                },
+                indent=2,
+            )
+        )
+
     for L in pulled_rows:
         if spend_micro / 1e6 >= hard_cap:
             print("  stop: hard cap")
@@ -682,8 +748,12 @@ def run_pull(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bo
         attempts += 1
         try:
             eout = pay("blitzapi.people.email.find", {"person_linkedin_url": L.get("profileUrl")})
-        except (RuntimeError, urllib.error.HTTPError) as e:
+        except RuntimeError as e:
             print(f"  stop/email: {e}")
+            break
+        except (urllib.error.URLError, urllib.error.HTTPError) as e:
+            print(f"  stop/email transport: {e}")
+            flush_ready_ckpt()
             break
         email = extract_email(eout if isinstance(eout, dict) else {})
         if not email:
@@ -716,8 +786,12 @@ def run_pull(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bo
             "company_linkedin": L.get("lastCompanyUrl"),
         }
         ready.append(row)
-        print(f"  ✓ {row['name']} <{email}> @ {row['company_name']}")
+        print(f"  ✓ {row['name']} <{email}> @ {row['company_name']}  [${spend_micro/1e6:.4f}]")
+        if len(ready) % 25 == 0:
+            flush_ready_ckpt()
+            print(f"  checkpoint-ready n={len(ready)} spend=${spend_micro/1e6:.4f}")
         time.sleep(0.08)
+    flush_ready_ckpt()
 
     spend = spend_micro / 1e6
     pulled_n = len(pulled_rows)
