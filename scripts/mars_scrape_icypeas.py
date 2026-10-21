@@ -729,13 +729,19 @@ def run_blitz_from_candidates(
             continue
         data = json.loads(p.read_text())
         rows = data if isinstance(data, list) else (data.get("rows") or [])
+        added = 0
         for r in rows:
-            if r.get("email"):
-                seen_email.add(r["email"].lower())
-            if r.get("person_linkedin"):
-                seen_li.add(norm_li(r["person_linkedin"]))
+            em = (r.get("email") or "").lower().strip()
+            li = norm_li(r.get("person_linkedin") or "")
+            if em and em in seen_email:
+                continue
+            if em:
+                seen_email.add(em)
+            if li:
+                seen_li.add(li)
             ready.append(r)
-        print(f"Seeded {len(rows)} ready from {p}")
+            added += 1
+        print(f"Seeded +{added} ready from {p} (total_seeded={len(ready)})")
 
     blob = json.loads(Path(candidates_path).read_text())
     candidates = blob.get("candidates") or []
