@@ -37,7 +37,7 @@ TOKEN = (
 ) or os.environ.get("TREG_TOKEN") or os.environ.get("treg")
 
 OUT_DIR = Path(os.environ.get("OUT_DIR", "/workspace/artifacts/zs-cap-raise-finance-ma-oct21"))
-LIST_NAME = "ZS Cap Raise / Finance / M&A Oct 21"
+LIST_NAME_DEFAULT = "ZS Cap Raise / Finance / M&A Oct 21"
 CLIENT = "ZS"
 
 TITLE_INCLUDE = [
@@ -189,16 +189,29 @@ def call(endpoint: str, body: dict | None = None) -> tuple[dict, int]:
         hdrs["X-Treg-Route-Max-Cost"] = "0.01"
         hdrs["X-Treg-Route-Waterfall"] = "0"
         hdrs["X-Treg-Route-Exclude"] = "aiark,icypeas"
-    req = urllib.request.Request(
-        f"https://treg.to/call/{endpoint}",
-        data=data,
-        method="POST" if body is not None else "GET",
-        headers=hdrs,
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        cost = int(resp.headers.get("X-Treg-Cost-Micro") or 0)
-        raw = resp.read()
-        return (json.loads(raw.decode()) if raw else {}), cost
+    last_err: Exception | None = None
+    for attempt in range(6):
+        try:
+            req = urllib.request.Request(
+                f"https://treg.to/call/{endpoint}",
+                data=data,
+                method="POST" if body is not None else "GET",
+                headers=hdrs,
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                cost = int(resp.headers.get("X-Treg-Cost-Micro") or 0)
+                raw = resp.read()
+                return (json.loads(raw.decode()) if raw else {}), cost
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            last_err = e
+            time.sleep(min(2**attempt, 30))
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504):
+                last_err = e
+                time.sleep(min(2**attempt, 30))
+                continue
+            raise
+    raise RuntimeError(f"treg call failed after retries: {endpoint}: {last_err}")
 
 
 def norm_li(u: str) -> str:
@@ -295,7 +308,7 @@ def supabase_rest(method: str, path: str, body=None, prefer: str | None = None) 
         return json.loads(raw.decode()) if raw else []
 
 
-def upload_supabase(rows: list[dict], report: dict, hard_cap: float) -> str:
+def upload_supabase(rows: list[dict], report: dict, hard_cap: float, list_name: str) -> str:
     """Bulk insert Lead Database + lead_lists + members. Returns list_id."""
     # Create list
     lists = supabase_rest(
@@ -303,7 +316,7 @@ def upload_supabase(rows: list[dict], report: dict, hard_cap: float) -> str:
         "/rest/v1/lead_lists",
         {
             "client": CLIENT,
-            "list_name": LIST_NAME,
+            "list_name": list_name,
             "source": "icypeas->blitz",
             "status": "enriched",
             "total_leads": len(rows),
@@ -394,7 +407,20 @@ def upload_supabase(rows: list[dict], report: dict, hard_cap: float) -> str:
     return list_id
 
 
-def run(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bool) -> None:
+def run(
+    pull: int,
+    hard_cap: float,
+    exclude_path: str | None,
+    do_upload: bool,
+    list_name: str = LIST_NAME_DEFAULT,
+    out_dir: Path | None = None,
+    enrich_from: str | None = None,
+    merge_ready_csv: str | None = None,
+    start_idx: int = 0,
+) -> None:
+    global OUT_DIR
+    if out_dir is not None:
+        OUT_DIR = out_dir
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     started = datetime.now(timezone.utc).isoformat()
     excl_emails, excl_li, excl_domains = load_exclude(exclude_path)
@@ -423,67 +449,106 @@ def run(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bool) -
     print(
         f"Exclude: emails={len(excl_emails)} linkedin={len(excl_li)} domains={len(excl_domains)}"
     )
-    print(f"Pull-N={pull}  cap=${hard_cap}  path=Icypeas→Blitz")
+    print(f"Pull-N={pull}  cap=${hard_cap}  list={list_name!r}  path=Icypeas→Blitz")
 
-    q = with_domain_exclude(base_query(), excl_domains)
-    print("=== FREE TAM ===")
-    tam_out = pay("icypeas.people.search.count", {"query": q})
-    tam = tam_out.get("total") or 0
-    print(f"  TAM: {tam:,}")
-
-    # Pull-N: collect N ICP people from Icypeas, then enrich that fixed batch only.
-    # Known LI/email are skipped before Blitz (not replaced by more search pages).
-    page_size = min(100, max(pull, 25))
-    pulled: list[dict] = []
-    searched = 0
     skipped_known_li = 0
     title_or_emp_fail = 0
-    token = None
-    max_pages = max(3, (pull // page_size) + 2)
+    searched = 0
+    tam = None
 
-    print("=== PULL ===")
-    for page_i in range(max_pages):
-        if len(pulled) >= pull:
-            break
-        if spend_micro / 1e6 >= hard_cap * 0.95:
-            print("  near hard cap — stop search")
-            break
-        need = pull - len(pulled)
-        size = min(200, max(need, 1))
-        body = {"query": q, "pagination": {"size": size}}
-        if token:
-            body["pagination"]["token"] = token
-        try:
-            out = pay("icypeas.people.search", body)
-        except RuntimeError as e:
-            print(f"  stop/search: {e}")
-            break
-        leads = out.get("leads") or []
-        searched += len(leads)
-        print(f"  page {page_i+1}: got {len(leads)} rows  pulled={len(pulled)}/{pull}  spend=${spend_micro/1e6:.4f}")
-        for L in leads:
+    if enrich_from:
+        print(f"=== ENRICH-FROM {enrich_from} (skip Icypeas search) ===")
+        pulled = []
+        with open(enrich_from) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                pulled.append(json.loads(line))
+                if pull and len(pulled) >= pull:
+                    break
+        print(f"  loaded {len(pulled)} pulled people")
+        search_spend_usd = 0.0
+    else:
+        q = with_domain_exclude(base_query(), excl_domains)
+        print("=== FREE TAM ===")
+        tam_out = pay("icypeas.people.search.count", {"query": q})
+        tam = tam_out.get("total") or 0
+        print(f"  TAM: {tam:,}")
+
+        # Pull-N: collect N ICP people from Icypeas, then enrich that fixed batch only.
+        # Known LI/email are skipped before Blitz (not replaced by more search pages).
+        page_size = 200 if pull >= 200 else min(100, max(pull, 25))
+        pulled = []
+        token = None
+        max_pages = max(3, (pull // page_size) + 5)
+
+        print("=== PULL ===")
+        for page_i in range(max_pages):
             if len(pulled) >= pull:
                 break
-            title = L.get("lastJobTitle") or L.get("headline") or ""
-            if not title_ok(title) or not emp_ok(L.get("lastCompanySize")):
-                title_or_emp_fail += 1
-                continue
-            li = norm_li(L.get("profileUrl") or "")
-            if not li:
-                continue
-            pulled.append(L)
-        token = (out.get("pagination") or {}).get("token")
-        if not token or not leads:
-            break
-        time.sleep(0.2)
+            if spend_micro / 1e6 >= hard_cap * 0.95:
+                print("  near hard cap — stop search")
+                break
+            need = pull - len(pulled)
+            size = min(200, max(need, 1))
+            body = {"query": q, "pagination": {"size": size}}
+            if token:
+                body["pagination"]["token"] = token
+            try:
+                out = pay("icypeas.people.search", body)
+            except RuntimeError as e:
+                print(f"  stop/search: {e}")
+                break
+            leads = out.get("leads") or []
+            searched += len(leads)
+            print(
+                f"  page {page_i+1}: got {len(leads)} rows  pulled={len(pulled)}/{pull}  "
+                f"spend=${spend_micro/1e6:.4f}"
+            )
+            for L in leads:
+                if len(pulled) >= pull:
+                    break
+                title = L.get("lastJobTitle") or L.get("headline") or ""
+                if not title_ok(title) or not emp_ok(L.get("lastCompanySize")):
+                    title_or_emp_fail += 1
+                    continue
+                li = norm_li(L.get("profileUrl") or "")
+                if not li:
+                    continue
+                pulled.append(L)
+            token = (out.get("pagination") or {}).get("token")
+            if not token or not leads:
+                break
+            time.sleep(0.2)
 
-    print(f"Pulled {len(pulled)} people (searched rows={searched})")
+        print(f"Pulled {len(pulled)} people (searched rows={searched})")
+        # Persist pull so enrichment can resume without re-search if interrupted
+        pulled_path = OUT_DIR / "full-pulled.jsonl"
+        with open(pulled_path, "w") as f:
+            for L in pulled:
+                f.write(json.dumps(L, ensure_ascii=False) + "\n")
+        print(f"  saved {pulled_path} ({len(pulled)} rows)")
+        search_spend_usd = spend_micro / 1e6
 
     # Enrich fixed batch only
     ready: list[dict] = []
     attempts = hits = freemail = skipped_email = empty_desc = 0
+    early_stop = False
     print("=== BLITZ EMAIL FIND ===")
-    for L in pulled:
+    print(f"  (search spend sunk=${search_spend_usd:.4f}; early-stop uses email-phase econ only)")
+    if start_idx > 0:
+        print(f"  resuming at idx>{start_idx} of {len(pulled)}")
+    attempted_path = OUT_DIR / "full-attempted-linkedin.txt"
+    if attempted_path.exists():
+        for line in attempted_path.read_text().splitlines():
+            if line.strip():
+                seen_li.add(line.strip().lower())
+        print(f"  loaded attempted LI skips from {attempted_path}")
+
+    for idx, L in enumerate(pulled, 1):
+        if start_idx and idx <= start_idx:
+            continue
         if spend_micro / 1e6 >= hard_cap:
             print("  hard cap reached — stop email find")
             break
@@ -494,6 +559,9 @@ def run(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bool) -
             skipped_known_li += 1
             continue
         seen_li.add(li)
+        # Persist every attempt (hit or miss) so resume doesn't re-bill misses
+        with open(attempted_path, "a") as af:
+            af.write(li + "\n")
         attempts += 1
         try:
             eout = pay("blitzapi.people.email.find", {"person_linkedin_url": L.get("profileUrl") or li})
@@ -507,6 +575,24 @@ def run(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bool) -
                     email = item["email"]
                     break
         if not email:
+            # Early-stop: poor Blitz hit rate only (not sunk search amortized early).
+            # Skip the "0 ready" abort when resuming / merging prior ready — misses at the
+            # head of the file would otherwise false-trigger.
+            if not enrich_from and not merge_ready_csv and attempts >= 80 and hits == 0:
+                print("  early-stop: 80 email attempts with 0 ready")
+                early_stop = True
+                break
+            if attempts >= 100 and hits > 0 and (attempts / hits) > 4:
+                print(f"  early-stop: email attempts/ready={attempts/hits:.1f} ≫ 4")
+                early_stop = True
+                break
+            if idx % 50 == 0:
+                print(
+                    f"  … {idx}/{len(pulled)}  ready={len(ready)}  attempts={attempts}  "
+                    f"spend=${spend_micro/1e6:.4f}",
+                    flush=True,
+                )
+            time.sleep(0.05)
             continue
         el = email.lower().strip()
         if el in seen_email:
@@ -537,29 +623,106 @@ def run(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bool) -
             "company_linkedin": L.get("lastCompanyUrl"),
         }
         ready.append(row)
-        print(f"  ✓ {row['name']} <{email}> @ {row['company_name']}")
-        time.sleep(0.08)
+        if len(ready) <= 15 or len(ready) % 25 == 0:
+            print(
+                f"  ✓ [{len(ready)}] {row['name']} <{email}> @ {row['company_name']}  "
+                f"spend=${spend_micro/1e6:.4f}",
+                flush=True,
+            )
+        # Checkpoint every 100 ready (never overwrite an explicit --merge-ready-csv source)
+        if len(ready) % 100 == 0:
+            ck = OUT_DIR / (
+                "full-ready.resume.partial.csv" if (enrich_from or merge_ready_csv) else "full-ready.partial.csv"
+            )
+            with open(ck, "w", newline="") as f:
+                w = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "name",
+                        "job_title",
+                        "employee_count",
+                        "company_desc",
+                        "email",
+                        "location",
+                        "company_name",
+                        "company_website",
+                        "company_industry",
+                        "person_linkedin",
+                        "company_linkedin",
+                    ],
+                    extrasaction="ignore",
+                )
+                w.writeheader()
+                w.writerows(ready)
+            (OUT_DIR / "full-progress.json").write_text(
+                json.dumps(
+                    {
+                        "ready": len(ready),
+                        "attempts": attempts,
+                        "spend_usd": round(spend_micro / 1e6, 6),
+                        "email_spend_usd": round(spend_micro / 1e6 - search_spend_usd, 6),
+                        "idx": idx,
+                        "pulled": len(pulled),
+                    },
+                    indent=2,
+                )
+            )
+        # Live unit-econ abort: email-phase only. Search is sunk for Pull-N.
+        # Require a meaningful sample before aborting on $/1k.
+        email_spend = spend_micro / 1e6 - search_spend_usd
+        if len(ready) >= 50 and attempts >= 100:
+            email_cpk = email_spend / len(ready) * 1000
+            apr = attempts / len(ready)
+            if apr > 4 or email_cpk > 10:
+                print(
+                    f"  early-stop: email $/1k={email_cpk:.2f} attempts/ready={apr:.2f} "
+                    f"(search sunk=${search_spend_usd:.4f} excluded from live $/1k)"
+                )
+                early_stop = True
+                break
+        time.sleep(0.05)
+        if early_stop:
+            break
+
+    # Optionally merge prior partial ready rows (resume path)
+    prior_ready: list[dict] = []
+    if merge_ready_csv and Path(merge_ready_csv).exists():
+        with open(merge_ready_csv, newline="") as f:
+            prior_ready = list(csv.DictReader(f))
+        # de-dupe by email against newly found
+        new_emails = {(r.get("email") or "").lower() for r in ready}
+        prior_ready = [r for r in prior_ready if (r.get("email") or "").lower() not in new_emails]
+        print(f"Merged prior ready CSV: +{len(prior_ready)} (new this run={len(ready)})")
+        ready = prior_ready + ready
 
     spend = spend_micro / 1e6
     ready_n = len(ready)
     coverage = round(ready_n / len(pulled), 3) if pulled else 0.0
-    # Quote reference for pull-N
-    quote_expected = pull * 0.00038 + pull * 0.45 * 0.000495
-    quote_max = pull * 0.00038 + pull * 0.000495
+    # Quote reference for pull-N (search may be 0 on enrich-from resume)
+    pull_for_quote = pull or len(pulled)
+    quote_expected = (
+        (0.0 if enrich_from else pull_for_quote * 0.00038)
+        + pull_for_quote * 0.45 * 0.000495
+    )
+    quote_max = (
+        (0.0 if enrich_from else pull_for_quote * 0.00038)
+        + pull_for_quote * 0.000495
+    )
 
     unit = {
         "cost_per_ready_usd": round(spend / ready_n, 6) if ready_n else None,
         "cost_per_1k_ready_usd": round(spend / ready_n * 1000, 2) if ready_n else None,
-        "search_rows_per_ready": round(searched / ready_n, 2) if ready_n else None,
-        "email_attempts_per_ready": round(attempts / ready_n, 2) if ready_n else None,
+        "search_rows_per_ready": round(searched / ready_n, 2) if ready_n and searched else None,
+        "email_attempts_per_ready": round(attempts / max(hits, 1), 2) if attempts else None,
         "blitz_hit_rate": round(hits / attempts, 3) if attempts else None,
+        "this_run_ready": hits,
+        "merged_prior_ready": len(prior_ready),
     }
 
     # Early-stop warning (report only — batch already done)
-    if ready_n and (
-        (unit["search_rows_per_ready"] or 0) > 12
-        or (unit["email_attempts_per_ready"] or 0) > 4
-        or (unit["cost_per_1k_ready_usd"] or 0) > 10
+    if ready_n and hits and (
+        (unit["email_attempts_per_ready"] or 0) > 4
+        or ((spend - search_spend_usd) / max(hits, 1) * 1000) > 10
     ):
         print("⚠ unit economics outside healthy band — review before full volume")
 
@@ -567,10 +730,13 @@ def run(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bool) -
         "at": datetime.now(timezone.utc).isoformat(),
         "started_at": started,
         "client": CLIENT,
-        "list_name": LIST_NAME,
+        "list_name": list_name,
         "path": "icypeas.people.search -> blitzapi.people.email.find",
+        "enrich_from": enrich_from,
         "hard_cap_usd": hard_cap,
         "spend_usd": round(spend, 6),
+        "search_spend_usd": round(search_spend_usd, 6),
+        "email_spend_usd": round(spend - search_spend_usd, 6),
         "quote_expected_usd": round(quote_expected, 6),
         "quote_max_usd": round(quote_max, 6),
         "variance_usd": round(spend - quote_expected, 6),
@@ -585,6 +751,7 @@ def run(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bool) -
         "email_hits": hits,
         "freemail_drop": freemail,
         "empty_desc_drop": empty_desc,
+        "early_stop": early_stop,
         "ready": ready_n,
         "coverage": coverage,
         "excluded": {"emails": len(excl_emails), "linkedin": len(excl_li), "domains": len(excl_domains)},
@@ -605,18 +772,21 @@ def run(pull: int, hard_cap: float, exclude_path: str | None, do_upload: bool) -
         "person_linkedin",
         "company_linkedin",
     ]
-    with open(OUT_DIR / "pilot-ready.csv", "w", newline="") as f:
+    is_full = (pull > 150) or bool(enrich_from) or len(pulled) > 150
+    ready_csv = OUT_DIR / ("full-ready.csv" if is_full else "pilot-ready.csv")
+    report_json = OUT_DIR / ("full-report.json" if is_full else "pilot-report.json")
+    with open(ready_csv, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
         w.writerows(ready)
-    (OUT_DIR / "pilot-report.json").write_text(json.dumps(report, indent=2))
+    report_json.write_text(json.dumps(report, indent=2))
 
     list_id = None
     if do_upload and ready:
         print("=== SUPABASE BULK UPLOAD ===")
-        list_id = upload_supabase(ready, report, hard_cap)
+        list_id = upload_supabase(ready, report, hard_cap, list_name=list_name)
         report["list_id"] = list_id
-        (OUT_DIR / "pilot-report.json").write_text(json.dumps(report, indent=2))
+        report_json.write_text(json.dumps(report, indent=2))
         print(f"  list_id={list_id}")
     elif do_upload and not ready:
         print("No ready rows — skip upload")
@@ -647,19 +817,44 @@ def main() -> None:
     ap.add_argument("--confirm-spend", type=float, default=None)
     ap.add_argument("--exclude-json", type=str, default=None)
     ap.add_argument("--upload-supabase", action="store_true")
+    ap.add_argument("--list-name", type=str, default=LIST_NAME_DEFAULT)
+    ap.add_argument("--out-dir", type=str, default=None)
+    ap.add_argument(
+        "--enrich-from",
+        type=str,
+        default=None,
+        help="Resume Blitz from saved full-pulled.jsonl (skips Icypeas search)",
+    )
+    ap.add_argument(
+        "--merge-ready-csv",
+        type=str,
+        default=None,
+        help="Merge a prior partial ready CSV into final output before upload",
+    )
+    ap.add_argument(
+        "--start-idx",
+        type=int,
+        default=0,
+        help="1-based index in pulled list to resume after (skip 1..start-idx)",
+    )
     args = ap.parse_args()
     if args.scope_only:
         scope_only(args.exclude_json)
         return
-    if args.pull:
+    if args.pull or args.enrich_from:
         if args.confirm_spend is None:
             print("Paid run requires --confirm-spend USD", file=sys.stderr)
             sys.exit(2)
         run(
-            pull=args.pull,
+            pull=args.pull or 0,
             hard_cap=args.confirm_spend,
             exclude_path=args.exclude_json,
             do_upload=args.upload_supabase,
+            list_name=args.list_name,
+            out_dir=Path(args.out_dir) if args.out_dir else None,
+            enrich_from=args.enrich_from,
+            merge_ready_csv=args.merge_ready_csv,
+            start_idx=args.start_idx,
         )
         return
     ap.print_help()
