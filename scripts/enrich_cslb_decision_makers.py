@@ -90,24 +90,36 @@ def load_token() -> str | None:
     return os.environ.get("TREG_TOKEN") or os.environ.get("treg")
 
 
-def call(endpoint: str, body: dict | None = None, *, email_route: bool = False) -> tuple[dict | list, int]:
+def call(
+    endpoint: str,
+    body: dict | None = None,
+    *,
+    query: dict | None = None,
+    method: str | None = None,
+    email_route: bool = False,
+) -> tuple[dict | list, int]:
     token = load_token()
     if not token:
         raise SystemExit("No Treg token. Set treg / TREG_TOKEN or ~/.treg/config.json")
-    data = None if body is None else json.dumps(body).encode()
+    from urllib.parse import urlencode
+
     hdrs = {"X-Treg-Token": token, "Accept": "application/json"}
-    if body is not None:
-        hdrs["Content-Type"] = "application/json"
     if email_route or "email.find" in endpoint:
         hdrs["X-Treg-Route-Max-Cost"] = "0.01"
         hdrs["X-Treg-Route-Waterfall"] = "0"
         hdrs["X-Treg-Route-Exclude"] = "aiark,icypeas"
-    req = urllib.request.Request(
-        f"https://treg.to/call/{endpoint}",
-        data=data,
-        method="POST" if body is not None else "GET",
-        headers=hdrs,
-    )
+
+    url = f"https://treg.to/call/{endpoint}"
+    if query:
+        url = f"{url}?{urlencode(query, doseq=True)}"
+
+    verb = (method or ("POST" if body is not None else "GET")).upper()
+    data = None
+    if body is not None and verb != "GET":
+        data = json.dumps(body).encode()
+        hdrs["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(url, data=data, method=verb, headers=hdrs)
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             cost = int(resp.headers.get("X-Treg-Cost-Micro") or 0)
@@ -138,6 +150,56 @@ def norm_domain(value: str | None) -> str:
         host = ""
     host = host.lower().removeprefix("www.")
     return host
+
+
+_STOP_NAME = {
+    "inc",
+    "llc",
+    "corp",
+    "co",
+    "company",
+    "the",
+    "and",
+    "of",
+    "a",
+    "an",
+    "construction",
+    "contractor",
+    "contractors",
+    "service",
+    "services",
+    "painting",
+    "general",
+    "engineering",
+}
+
+
+def domain_plausible(domain: str, company_name: str, state: str = "CA") -> bool:
+    """Reject obvious Hunter false matches for CA contractor names."""
+    d = norm_domain(domain)
+    if not d or "." not in d:
+        return False
+    tld = d.rsplit(".", 1)[-1]
+    # CA contractors: prefer common US/commercial TLDs
+    if tld not in {"com", "net", "org", "us", "biz", "io", "co"}:
+        return False
+    # Token overlap between company name and domain label
+    label = d.split(".")[0]
+    tokens = [
+        t
+        for t in re.findall(r"[a-z0-9]+", (company_name or "").lower())
+        if len(t) >= 3 and t not in _STOP_NAME
+    ]
+    if not tokens:
+        return True  # nothing to check
+    # Accept if any distinctive token appears in domain label
+    if any(t in label for t in tokens):
+        return True
+    # Or concatenated first letters / multi-token join
+    joined = "".join(tokens[:3])
+    if len(joined) >= 4 and joined[:4] in label:
+        return True
+    return False
 
 
 def norm_li(u: str) -> str:
@@ -188,27 +250,32 @@ def resolve_domain(row: dict, spend: dict, hard_cap: float | None, allow_paid: b
     if not name:
         return ""
 
-    # Free: hunter.x.domain-finder
+    # Free: hunter.x.domain-finder (GET query params)
     try:
-        out, cost = call("hunter.x.domain-finder", {"company": name})
+        out, cost = call(
+            "hunter.x.domain-finder",
+            query={"company": name, "limit": 5},
+            method="GET",
+        )
         spend["micro"] += cost
         if hard_cap is not None and spend["micro"] / 1e6 > hard_cap:
             raise RuntimeError(f"hard cap ${hard_cap} exceeded")
-        # response shapes vary
-        domain = ""
+        candidates: list[str] = []
         if isinstance(out, dict):
-            domain = (
-                out.get("domain")
-                or (out.get("data") or {}).get("domain")
-                or (out.get("output") or {}).get("domain")
-                or ""
-            )
-            if not domain and isinstance(out.get("domains"), list) and out["domains"]:
-                d0 = out["domains"][0]
-                domain = d0 if isinstance(d0, str) else (d0.get("domain") or "")
-        domain = norm_domain(domain)
-        if domain:
-            return domain
+            data = out.get("data")
+            if isinstance(data, list):
+                for d0 in data:
+                    if isinstance(d0, dict) and d0.get("domain"):
+                        candidates.append(str(d0["domain"]))
+                    elif isinstance(d0, str):
+                        candidates.append(d0)
+            elif isinstance(data, dict) and data.get("domain"):
+                candidates.append(str(data["domain"]))
+        state = (row.get("state") or "CA").strip()
+        for cand in candidates:
+            d = norm_domain(cand)
+            if d and domain_plausible(d, name, state):
+                return d
     except Exception as e:
         print(f"  domain-finder miss/err ({name[:40]}): {e}")
 
