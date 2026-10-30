@@ -662,7 +662,7 @@ def main(argv: list[str] | None = None) -> int:
             p["email_status"] = "linkedin_skipped_known"
             continue
         try:
-            out = pay("blitzapi.people.email.find", {"linkedin_url": li}, email_route=True)
+            out = pay("blitzapi.people.email.find", {"person_linkedin_url": li}, email_route=True)
         except RuntimeError as e:
             print(f"  email stop: {e}")
             p["email"] = ""
