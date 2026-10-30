@@ -41,18 +41,40 @@ Treg (`treg.to`) is a multi-provider API gateway. One token, many backends.
 We do NOT freestyle paid `/call/` loops. Prefer repo runners with
 `--scope-only`, `--estimate`, and `--confirm-spend`.
 
-## 2. DEFAULT PATHWAY (LOCKED — CHEAP SCRAPE METHOD)
+## 2. DEFAULT PATHWAY (LOCKED — Oct 30, 2026: LeadsForge → Icypeas → Blitz)
 
-This is the proven cheap path (~$2–2.5 per 1,000 ready emails when filters are tight):
+**As of Oct 30, 2026, the ONLY supported people-sourcing path is:**
+
+```
+LeadsForge → Icypeas exact-person → Blitz
+```
+
+The old direct Icypeas people.search → Blitz path is **DISABLED**.
+
+### Pipeline stages:
 
 | Stage | Tool | Endpoint | Notes |
 |-------|------|----------|-------|
-| A. Free TAM | Icypeas count | `icypeas.people.search.count` | $0 — always first |
-| B. Discover | Icypeas people | `icypeas.people.search` | ~$0.00038 / returned row |
-| C. Cost skip | Supabase | Lead Database / cache | Skip known LinkedIn / email / domain |
-| D. Email find | Blitz | `blitzapi.people.email.find` | ~$0.000495 / success; needs LinkedIn |
-| E. Verify (optional) | MillionVerifier | `millionverifier.people.email.verify` | After path is proven; never burn pilot on bad MV format |
-| F. Upload | Supabase + list_id | bulk upsert | Never row-by-row for 100+ leads |
+| A. Free TAM | LeadsForge count | `leadsforge.people.search` (cursor) | Free count first |
+| B. Discover | LeadsForge search | `leadsforge.people.search` | Paginated people search with suppression in-query |
+| C. Match | Icypeas exact-person | `icypeas.people.search` | ~$0.00038/row; batched 25 people (firstname/lastname/domain arrays) |
+| D. Suppress | Always-on | LinkedIn + email check | Separate SUPPRESS flag, never disabled by NOFILTER |
+| E. Cache skip | Supabase | pipeline_leads 30-day | Skip known emails updated <30 days |
+| F. Pattern + verify | ContactOut | `contactout.people.email.verify` | Best effort, free tier, short timeout, skip on 429 |
+| G. Email find | Blitz | `blitzapi.people.email.find` | ~$0.000495/success; needs LinkedIn |
+| H. Fallback (opt) | QuickEnrich/TryKitt | `quickenrich.*` / `trykitt.*` | ~$0.005/hit; config-gated, per-run cap |
+| I. Verify | MillionVerifier | `millionverifier.people.email.verify` | ~$0.00178/success |
+| J. Catch-all | BounceBan | `bounceban.people.email.verify` | For MV catch_all results; async polling |
+| K. Upload | Supabase + list_id | bulk upsert | Never row-by-row for 100+ leads |
+
+### Critical changes from old path:
+
+1. **LeadsForge first**: Must go through LeadsForge people search before Icypeas
+2. **Icypeas exact-person**: Batch 25 LeadsForge people per query using firstname/lastname/domain include arrays
+3. **Always-on suppression**: Separate SUPPRESS flag that cannot be disabled by NOFILTER
+4. **Concurrent enrichment**: Per-provider worker pools, pipelined per-person (not sequential batches)
+5. **ContactOut best-effort**: Short timeouts (3s default), skip on timeout/rate-limit instead of blocking
+6. **Never block on catch-all**: BounceBan polling runs async, never blocks other workers
 
 ### Email route headers (required on Blitz / find calls)
 
@@ -255,12 +277,13 @@ If you are at ~$35–50/1k or 100+ rows/ready, you are doing it wrong — stop.
 |------|------|
 | `.cursor/rules/lead-scrape.mdc` | Always-on rule for scrape chats in this repo |
 | `.cursor/skills/lead-scrape-gates/SKILL.md` | Hard gates + Pull-N + tool order |
-| `docs/waterfall-cost-matrix.md` | Catalog rates / billing units |
+| `docs/waterfall-cost-matrix.md` | Catalog rates / billing units + enrichment concurrency |
 | `scripts/treg_pricing.py` | Catalog quote helper |
-| `scripts/pilot_icypeas_blitz_four_verticals.py` | Cheap Scrape reference runner |
-| `scripts/mars_scrape_icypeas.py` | Mars runner (when present) |
-| `scripts/atc_np_pa_list_builder.py` | ATC reference with PlusVibe suppress (when present) |
-| `scripts/gws_list_builder.py` | GWS list builder (when present on branch) |
+| `scripts/unified_engine.py` | **NEW (Oct 30, 2026)**: LeadsForge → Icypeas → Blitz unified pipeline |
+| ~~`scripts/pilot_icypeas_blitz_four_verticals.py`~~ | **DEPRECATED**: Direct Icypeas → Blitz (disabled, refuses to run) |
+| `scripts/mars_scrape_icypeas.py` | Mars runner (when present; may need migration) |
+| `scripts/atc_np_pa_list_builder.py` | ATC reference with PlusVibe suppress (when present; may need migration) |
+| `scripts/gws_list_builder.py` | GWS list builder (when present on branch; may need migration) |
 
 ## One-liner kickoff (after the master prompt is pasted)
 
