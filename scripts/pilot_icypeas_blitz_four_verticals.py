@@ -623,38 +623,36 @@ def run(
 
 
 def main() -> None:
-    if not TOKEN:
-        print("Missing TREG_TOKEN / ~/.treg/config.json", file=sys.stderr)
-        sys.exit(1)
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--scope-only", action="store_true")
-    ap.add_argument("--pilot", action="store_true")
-    ap.add_argument("--full", type=int, default=0, help="ready per vertical for volume run")
-    ap.add_argument("--confirm-spend", type=float, default=None)
-    ap.add_argument("--exclude-json", type=str, default=None, help="JSON with emails/linkedin/domains")
-    ap.add_argument(
-        "--local-quality",
-        action="store_true",
-        help="(unused/reserved) local ICP regex — off by design; keep filters in-query",
-    )
-    args = ap.parse_args()
-    if args.scope_only:
-        scope_only(args.exclude_json)
-        return
-    if args.pilot or args.full:
-        if args.confirm_spend is None:
-            print("Paid run requires --confirm-spend USD", file=sys.stderr)
-            sys.exit(2)
-        ready = 10 if args.pilot else args.full
-        run(
-            ready_per=ready,
-            hard_cap=args.confirm_spend,
-            exclude_path=args.exclude_json,
-            local_quality=args.local_quality,
-        )
-        return
-    ap.print_help()
-    sys.exit(2)
+    print("=" * 80)
+    print("DEPRECATED: Direct Icypeas → Blitz path is NO LONGER SUPPORTED")
+    print("=" * 80)
+    print()
+    print("As of Oct 30, 2026, the ONLY supported people-sourcing path is:")
+    print("  LeadsForge → Icypeas → Blitz")
+    print()
+    print("This script (pilot_icypeas_blitz_four_verticals.py) bypasses LeadsForge")
+    print("and goes directly from Icypeas people.search to email finding.")
+    print()
+    print("That workflow is now DISABLED.")
+    print()
+    print("MIGRATION:")
+    print("  Use scripts/unified_engine.py instead:")
+    print()
+    print("  # Free TAM count")
+    print("  python scripts/unified_engine.py --client ZS --scope-only --exclude-json suppress.json")
+    print()
+    print("  # Pilot run")
+    print("  python scripts/unified_engine.py --client ZS --pilot --confirm-spend 2.50 --exclude-json suppress.json")
+    print()
+    print("  # Full run")
+    print("  python scripts/unified_engine.py --client ZS --full 1000 --confirm-spend 45.00 --exclude-json suppress.json")
+    print()
+    print("For help migrating your Icypeas queries to LeadsForge, see:")
+    print("  - README.md (Migration Guide)")
+    print("  - docs/waterfall-cost-matrix.md")
+    print("  - 08-treg-lead-scrape/MASTER-PROMPT.md")
+    print()
+    sys.exit(1)
 
 
 if __name__ == "__main__":

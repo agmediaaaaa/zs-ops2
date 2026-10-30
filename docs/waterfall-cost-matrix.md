@@ -3,14 +3,20 @@
 Catalog rates from `treg catalog get` (verify live before quoting).  
 Rule: **quote from catalog × planned volume**, never invent flat “$/lead” averages.
 
-## Default pathway (locked)
+## Default pathway (Oct 30, 2026: LeadsForge → Icypeas → Blitz)
+
+**As of Oct 30, 2026, the ONLY supported people-sourcing path:**
 
 | Stage | Endpoint | Billing unit | Catalog USD (verify) | Notes |
 |-------|----------|--------------|----------------------|-------|
-| Free TAM | `icypeas.people.search.count` | — | **free** | Always first; full exclude query |
-| Discover | `icypeas.people.search` | /result returned | **$0.00038** | `pagination.size` is the price dial (max 200) |
+| Free TAM | `leadsforge.people.search` (count) | — | **free** | Free count first; full exclude query |
+| Discover | `leadsforge.people.search` | varies | **varies** | Paginated search with suppression in-query |
+| Exact match | `icypeas.people.search` | /result returned | **$0.00038** | Batched 25 people (firstname/lastname/domain arrays); match by name+domain |
+| Pattern verify | `contactout.people.email.verify` | /success | **free tier** | Best effort; short timeout (3s); skip on 429 |
 | Email find | `blitzapi.people.email.find` | /success | **$0.000495** | Misses free; needs LinkedIn URL |
-| Verify (optional) | `millionverifier.people.email.verify` | /success | **$0.00178** | After path proven; not on first pilot |
+| Fallback (opt) | `quickenrich.*` or `trykitt.*` | /hit | **$0.005** | Config-gated; per-run cap; only when Blitz fails |
+| Verify | `millionverifier.people.email.verify` | /success | **$0.00178** | After email found |
+| Catch-all | `bounceban.people.email.verify` | /success | **up to $0.005** | For MV catch_all results; async polling |
 
 ### Blitz / find route headers (required)
 
@@ -19,6 +25,31 @@ X-Treg-Route-Max-Cost: 0.01
 X-Treg-Route-Waterfall: 0
 X-Treg-Route-Exclude: aiark,icypeas
 ```
+
+## Enrichment concurrency & speed (Oct 30, 2026)
+
+**Target: ~70-75 ready leads/min**
+
+### Per-provider worker pools:
+
+| Provider | Workers | Timeout | Notes |
+|----------|---------|---------|-------|
+| ContactOut | 8 | 3s | Best effort; skip on timeout/429; don't block |
+| Blitz | 32 | 60s | Primary enrichment; retry on 429 |
+| Fallback | 4 | 45s | QuickEnrich/TryKitt; config-gated |
+| MillionVerifier | 16 | 120s | After email found |
+
+### Pipeline per person (not sequential batches):
+
+```
+Person → Cache check → Pattern+ContactOut (skip on slow) → Blitz → Fallback (if enabled) → MV → BB (async)
+```
+
+- As soon as a person fails one step, they go to the next
+- Each provider has its own concurrency limit
+- Rate limiting: backoff on 429, skip ContactOut on timeout
+- Catch-all/BounceBan polling never blocks other workers
+- Never call a paid step twice for the same person (dedupe + cache)
 
 ## Reference economics (tight filters)
 
@@ -74,3 +105,16 @@ Re-check catalog if rates look stale:
 treg catalog get icypeas.people.search
 treg catalog get blitzapi.people.email.find
 ```
+
+## Always-on suppression (Oct 30, 2026)
+
+**Critical**: Suppression is now a separate `SUPPRESS` flag that **cannot be disabled** by `NOFILTER` or any other setting.
+
+Bug fixed Oct 30: NOFILTER was silently disabling all suppression. New behavior:
+
+- `SUPPRESS` flag is always checked (LinkedIn URLs + emails)
+- Fails loudly if suppression sets are empty
+- Counters track suppression hits separately from filtration
+- LinkedIn suppression check happens before any enrichment
+- Email suppression check happens after finding email
+- Supabase cache check (30-day window) happens before any paid enrichment step
