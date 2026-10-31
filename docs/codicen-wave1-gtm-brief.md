@@ -2,182 +2,188 @@
 
 **Internal. Do not send this document to prospects.**
 
-Third-grade rule: if a 9-year-old cannot say what we are offering in one sentence, rewrite it.
+Sources: Codicen onboarding (Haroon/Idris) + [codicen.com](https://codicen.com) (“Nine fronts. One calendar.”).
 
-Spam / templating: [SOP.md](../05-copy-messaging-framework-agent-5/SOP.md), [SOP-spam-guard.md](../05-copy-messaging-framework-agent-5/SOP-spam-guard.md), [SOP-plusvibe-templating.md](../05-copy-messaging-framework-agent-5/SOP-plusvibe-templating.md).
-
----
-
-## 0) Premise
-
-**Codicen** builds a deadline calendar for California CSLB contractors and texts/emails the office 60 / 30 / 7 days before each date. They track and remind. They do not file, pay, advise, or work for the state.
-
-**Cold email is not “here are three public dates.”** That data already sits on a file. Weak.
-
-**Cold email is:** pick a segment → name a **want they feel** → promise an asset they do **not** already have on a sticky note → after yes, prove it with a small public-file slice → call to unlock the full year + reminder system.
-
-### Conversion skeleton (every offer)
-
-| Step | Job |
-|------|-----|
-| Email 1 | Segment hook + **named offer** + easy yes. No call ask. |
-| Email 2 | Proof slice (real for *their* company). Soft bridge. |
-| Email 3 | Confirm phone. Walk rest of year + 60/30/7. |
-| Teams | Demo after phone (Haroon / Idris, 8am–5pm PDT). |
+Spam / templating: [SOP-spam-guard.md](../05-copy-messaging-framework-agent-5/SOP-spam-guard.md), [SOP-plusvibe-templating.md](../05-copy-messaging-framework-agent-5/SOP-plusvibe-templating.md).
 
 ---
 
-## 1) Targeting + how we segment
+## 0) The flip (read this first)
 
-### Always true
+### Easy (public CSLB file) — proof only, not the sell
 
-- California, active CSLB, trade in band, Office Manager → Owner
-- ICP 1 control: 10–50 employees
-- Dedup on CSLB number
-- Suppress clients / prior sends
+From the public database we can pull and **email after they say yes**:
 
-### Segment axes (cut the list before writing copy)
+1. License date  
+2. Bond date  
+3. Coverage on file date  
+4. (optional) class / qualifier / surety name on record  
 
-| Axis | Cuts | Why it changes the offer |
-|------|------|---------------------------|
-| **Hot item** | Soonest of license / bond / coverage ≤ 120 days | What we name in the first line |
-| **Timing band** | 1–30 / 31–60 / 61–120 days | Urgency of “prep pack” vs “year map” |
-| **Title** | Office Manager vs Owner | Permits/office desk vs collect/bid |
-| **Trade** | B, C-10, C-36, C-20, C-39, C-33, C-8 | Plain-word relevance; WC-heavy trades lean coverage |
-| **Entity** | LLC vs Corp/sole | LLC shops often juggle more than one bond story |
-| **Class count** | Single vs multi-class | Multi-class → “one map for every class” |
+Shops already half-know this stuff. The letter + bond person covers a lot of it. **Do not lead with “want your three public dates?”** That is not why anyone pays for Codicen.
 
-### Trade plain words
+### Hard (Codicen register) — this is the offer
 
-| Code | `trade_plain` |
-|------|----------------|
-| B | general building |
-| C-10 | electrical |
-| C-36 | plumbing |
-| C-20 | HVAC |
-| C-39 | roofing |
-| C-33 | painting |
-| C-8 | concrete |
+Codicen’s product is a **bespoke calendar across nine fronts that do not talk to each other**, plus **what a miss costs** and **60 / 30 / 7 reminders**. From [codicen.com](https://codicen.com) + onboarding:
 
-### Do not mail
+| Front | What sits on the calendar (examples) |
+|-------|--------------------------------------|
+| **CSLB** | License, contractor bond, coverage certificate/exemption, LLC worker bond + liability, salesperson reg, 90-day address/personnel/qualifier notices |
+| **Secretary of State** | Statement of Information (LLC-12 / SI-550) on its own window |
+| **Franchise Tax Board** | $800 annual tax, LLC gross-receipts fee tiers, entity returns / estimates |
+| **IRS & EDD** | 941 / DE 9, W-2 / 940, 1099-NEC, DE 34, DE 542, federal entity return |
+| **Cities & County** | Business license in home city **and every city you work**, DBA cycle, per-permit city taxes |
+| **EPA** | Firm RRP (5-year), individual renovator + refresher, 90-day window before expiry |
+| **DPR + Ag** | Applicator, CE hours, pest business license, county Ag registration, monthly use reports |
+| **DIR / Cal-OSHA / CARB** | Public works registration, certified payroll on public jobs, Form 300A, Clean Truck Check |
+| **Carriers** | Policy renewals + premium audit, GL, commercial auto, surety term |
 
-Outside CA, non-contractors, 100+, “file my suspension for me,” scare framing of already-lapsed as “you are lapsed.”
+Onboarding reminders: text + email **60 / 30 / 7** days out. Product copy also surfaces **fee + miss cost + statute** per date.
 
-### Vars every segment can use
+**Hard fronts need a short call** (cities they work, crew/payroll shape, public-works or pre-1978 work, entity). We do not pretend we can email the full nine-front map cold with zero input.
 
-| Var | Meaning |
-|-----|---------|
-| `next_item` | license / bond / coverage on file |
-| `days_left` | 1–120 |
-| `next_date` | that date |
-| `license_exp`, `bond_exp`, `coverage_exp` | Email 2 proof |
-| `surety_short` | optional when bond is hot |
-| `principal_first` | office-vs-field |
-| `class_count` | multi-class offers |
-| `business_type` | LLC pack |
-| `phone` | Email 3 |
+### Funnel (locked)
+
+```
+Email 1  →  Sell HARD calendar (city / EPA / DIR / SOS / FTB / …)
+            angled to facility, service, client, tender, project, or miss-cost
+            Easy yes. No call ask yet.
+
+After yes → Send EASY 3 public dates as a free slice
+            “This is what we can pull without you. The rest needs a short call.”
+
+Email 3   → Confirm phone. Build the 12-month map for the hard fronts
+            + how reminders fire.
+
+Phone     → Walk hard fronts for their shop → Teams demo.
+```
+
+### One-line premise
+
+**Money is for the hard-to-track fronts.** Public dates are the free appetizer after yes — not the meal.
+
+---
+
+## 1) Targeting
+
+- CA active CSLB, ICP 1 = 10–50, Office Manager → Owner  
+- Trades: B, C-10, C-36, C-20, C-39, C-33, C-8 (+ pest/DPR when class fits)  
+- Optional heat filter: next **public** date ≤ 120 days (list priority only — still do not sell “your three dates”)  
+- Suppress clients / non-CA / 100+ / “file my suspension”
+
+### Segment axes for angles (not just “contractor”)
+
+| Axis | Examples | Hard fronts that light up |
+|------|----------|---------------------------|
+| **Facility** | Pre-1978 homes, schools, hospitals, HOA, commercial shell | EPA RRP; city licenses; sometimes DIR |
+| **Service / trade** | Electrical, plumbing, HVAC, roofing, painting, concrete, pest | EPA (paint/roof/reno); DPR (pest); coverage-weighted trades |
+| **Client type** | Homeowner, GC, property manager, public agency, district | City stack; DIR/public works; certified payroll |
+| **Tender / project** | Public works, school bond, multi-city rollout, tenant improvement | DIR registration; city-by-city licenses; Clean Truck on heavy fleet |
+| **Entity** | LLC vs Corp | SOS SOI; FTB LLC fee; LLC worker bond |
+| **Ops shape** | Multi-city crews, subs on 1099, diesel trucks 14k+ | Cities & County; IRS/EDD; CARB |
+
+Infer what you can from CSLB (trade, city, entity, class count). Ask/confirm facility, client, and tender type on the call — Email 1 can still *speak* those worlds in plain language.
 
 ---
 
 ## 2) Persona (short)
 
-**Office Manager:** mail + permits + “don’t look bad.” Fears a stopped job. Wants dates the office can hold.
+**Office Manager:** juggling mail, city hall, and the boss on a job. Fears looking bad when a city or EPA date was never on the letter.
 
-**Owner:** keep working and collecting. Fears paper blocking pay or a bid. Wants clarity without babysitting.
+**Owner:** wants jobs, pay, and bids to stay clear. Fears paperwork (not craft) killing a contract or a payment.
 
-Language: permits, letter, bond person, jobs, crews. Not “compliance platform.”
-
----
-
-## 3) Offer portfolio (create your own cuts)
-
-Rule for every offer: **promise something they do not already have printed on the CSLB letter.**
-
-Proof after yes can still use the three public dates — but Email 1 sells a **job-to-be-done**, not a data dump.
-
-### Portfolio map
-
-| ID | Offer name | Segment | Promise (Email 1) | Proof (Email 2) | Call unlock |
-|----|------------|---------|-------------------|-----------------|-------------|
-| **O1** | 12-month shop calendar | Any ≤120d, OM | Full-year deadline calendar for the company | 3 public dates as “front of map” | Rest of year + reminders |
-| **O2** | Letter-vs-file gap card | OM who trusts the letter | Side-by-side: what the letter covers vs what else sits on *their* public file | Their 3 dates labeled letter vs file | How reminders cover the “file” side |
-| **O3** | Next-date prep pack | Hot item = bond *or* coverage *or* license; ≤60d stronger | Prep pack for the **specific** next item + the other two lined up | Next item date + other two | Who owns each + reminder timing |
-| **O4** | Who-owns-what desk sheet | OM, 10–50 | One sheet: which date → which party (CSLB / surety / carrier) for *their* shop | Filled sheet from public file | Add city/trade rows on call |
-| **O5** | Reminder dry-run | Any ≤120d | Sample 60/30/7 messages timed to *their* next date | Dry-run copy + the 3 dates | Turn dry-run into live calendar |
-| **O6** | 90-day permit-clear view | OM; permits language; ≤120d | Ordered view of public dates inside the next ~90 days for permit pulls | Those dates in order | Full 12 months beyond the 90 |
-| **O7** | Collect-clear year map | Owner / RMO | Year map so finished work stays clear to collect on | 3 dates | Reminder system + demo |
-| **O8** | Bid-ready date map | Owner; bid-heavy trades (B, C-10, etc.) | Map of public dates so the shop stays clear to bid | 3 dates | Full year + how office gets pinged |
-| **O9** | Office desk pack | OM + known qualifier name | Calendar the **office** holds while qualifier is on a job | 3 dates | Reminders to office contacts |
-| **O10** | LLC entity pack | `business_type` = LLC | Entity-aware year map (license + bond + coverage, not “one letter”) | 3 dates | Entity/city add-ons on call |
-| **O11** | Multi-class map | `class_count` ≥ 2 | One calendar across every class on the license | 3 dates (+ class list plain) | Per-class extras on call |
-| **O12** | Coverage-weighted trade pack | C-20 / C-39 / C-8 (and similar) | Year map with coverage-on-file called out as a first-class date | 3 dates | Trade extras (EPA etc.) only after they share more |
-
-**Parked (not Email 1 cold):** city / EPA / DIR lists until they name cities (Offer D).
-
-### How to pick Wave 1 tests (do not run all 12 at once)
-
-| Test | Offer | List cut | Why |
-|------|-------|----------|-----|
-| Control | **O1** | ICP1 OM, ≤120d, mixed trades | Clear product promise |
-| Challenger A | **O2** | Same, exclude if prior “we already get the letter” is unknown — still strong default challenger | Attacks the real objection |
-| Challenger B | **O5** | ≤90d | Product preview feels tangible |
-| Challenger C | **O3** | `next_item` = bond, ≤60d | Sharp personalization |
-| Owner lane | **O7** | Title = Owner, ≤120d | Different want |
-| Trade lane | **O12** | C-20 + C-39 + C-8, ≤120d | Trade-true |
-
-Metric: **completed phone calls**, not raw yeses.
+Hero line (site): *They don’t take your license for bad work. They take it for paperwork.*
 
 ---
 
-## 4) Angles (pair with an offer)
+## 3) Offers = hard promise + easy proof
 
-One idea per email.
+| Stage | Asset | Source |
+|-------|--------|--------|
+| **Email 1 promise** | 12-month register for **their** shop across the fronts that match their work (name 2–3 hard fronts) | Codicen library (needs call to tailor) |
+| **Email 2 proof** | License + bond + coverage on file | Public CSLB only |
+| **Call** | Full map: cities, EPA/DIR/SOS/FTB/carriers as relevant + 60/30/7 | Codicen build |
 
-| Angle | Pairs well with |
-|-------|-----------------|
-| Countdown fact (public file, ~X days) | O1, O3, O5, O6 |
-| Letter is incomplete | O2, O1 |
-| Permits | O1, O6, O9 |
-| Collect / pay clear | O7 |
-| Bid / tender clear | O8 |
-| Office vs field | O9 |
-| Entity complexity | O10 |
-| Many classes, one map | O11 |
-| Coverage is not “extra paperwork” for this trade | O12 |
-| Reminder preview beats another spreadsheet | O5 |
+### Offer cards (Email 1 sells these — not the public trio)
 
----
+| ID | Offer name | Who / cut | Hard fronts named | Want |
+|----|------------|-----------|-------------------|------|
+| **H1** | Multi-city license calendar | Shops that work across cities | Cities & County | Keep pulling permits in every city you work |
+| **H2** | Pre-1978 / reno EPA pack | Paint, roof, general reno language | EPA RRP + city | Stay clear on older housing stock |
+| **H3** | Public-works / tender pack | Bid / agency / school language | DIR + certified payroll + city | Stay clear to bid public and agency work |
+| **H4** | Entity + tax calendar | LLC / Corp | SOS + FTB (+ CSLB LLC bond) | Entity paperwork on one calendar |
+| **H5** | Crew / payroll obligation map | 10–50 with crew | IRS & EDD + carriers | Office sees payroll and carrier dates before they land |
+| **H6** | Full nine-front year map | Broad OM control | “Nine fronts in one calendar” | One register instead of nine silos |
+| **H7** | Miss-cost register extract | Any (cite general figures) | Dates + fee + miss cost + statute | See what a miss can cost before it hits |
+| **H8** | Pest / Ag county pack | Pest / landscape-adjacent | DPR + Ag + city | County + monthly report dates on the calendar |
 
-## 5) Snippet rules
-
-**Email 1:** company, city, trade, and (when in segment) `next_item` + `days_left`. One offer. No license #. No “comp.” No call ask. No scare.
-
-**Email 2:** proof only — three dates and/or the named artifact (gap labels, dry-run lines, who-owns-what).
-
-**Email 3:** phone confirm for rest + reminders.
+**Proof line (every Email 2):** send the easy three, then: hard fronts on the call.
 
 ---
 
-## 6) Script previews (filled + PlusVibe)
+## 4) Angle library (pair with an H-offer)
 
-Shared example: **Harbor Peak Electric**, San Jose, electrical, Office Manager **Maria**, Owner **James**, next **bond** in **67** days (O3 bond pack uses 45 days).
+Keep **one** angle per email. Prefer facility / service / client / tender / project. Outcome and scare are fine if factual and not “your license is lapsed.”
 
-All bodies spam-scanned: no Hi/Hey, no banned tokens, no em dashes in sendable copy.
+### Outcome angles
+
+| Code | Angle | Sample want line |
+|------|-------|------------------|
+| **W1** | Collect sooner / stay collectible | Finished work stays clear to collect on when the packet is current |
+| **W2** | Bid / tender easier | Bid packets go out with less scramble when DIR + city dates are already mapped |
+| **W3** | Multi-city work | Taking a job in a second city does not mean a surprise business-license date |
+| **W4** | Older-home / reno work | Pre-1978 and reno work needs EPA dates the CSLB letter never shows |
+| **W5** | Agency / school / public jobs | Public and agency work expects DIR + city paperwork the letter ignores |
+| **W6** | Office while field works | Hard dates still hit the office while the qualifier is on a job |
+
+### Scare / miss-cost angles (general + cited — never “you are lapsed”)
+
+Use as **industry facts**. Cite. Do not diagnose their file.
+
+| Code | Fact (from onboarding / site / statute talk) | Soft email use |
+|------|-----------------------------------------------|----------------|
+| **S1** | July 1, 2023: CSLB suspended 1,681 licenses and pulled a class from 1,122 more for no workers’ comp on file | “Coverage on file is not side paperwork for CA crews.” |
+| **S2** | B&P 7125.2 — coverage lapse can suspend the license that day without a friendly heads-up | Pair with H6/H7; still do not say *their* coverage is bad |
+| **S3** | Wright v. Issak — mid-job coverage gap, lost right to be paid | Collect angle W1 |
+| **S4** | Judicial Council v. Jacobs Facilities — license lapse, ~$18.3M disgorgement story | Tender/project scare; keep short |
+| **S5** | Labor Code 3722 — uninsured employer stop-order penalty framed at $1,500 per employee | Crew shops |
+| **S6** | Site story: bond runs out / cancel → same-day suspend → work while out can mean paying back everything (B&P 7031) | Bond-aware, still general |
+| **S7** | City business license in **every** city you work — easy to miss when crews roam | H1 / W3 |
+
+**Never say:** their license/bond/coverage is at risk, under audit, or lapsed; that Codicen files/pays; prices; client results; “never miss”; CSLB endorsement.
+
+Spam note: avoid banned tokens (`get`, `urgent`, `soon`, `insurance`, `free`, `now`, …). Prefer “collect,” “bid packet,” “public file,” “on record.”
 
 ---
 
-### O1 — 12-month shop calendar (control)
+## 5) Recommended Wave 1 pairings
+
+| Test | Offer | Angle | List hint |
+|------|-------|-------|-----------|
+| Control | **H6** nine-front map | W1 collect or W2 bid | ICP1 OM, mixed trades |
+| Challenger | **H1** multi-city | W3 | City ≠ only HQ city when known, or OM language “jobs across cities” |
+| Challenger | **H3** public-works / tender | W2 + light S4 | Owner or OM; B / C-10 language |
+| Challenger | **H2** EPA / pre-1978 | W4 | C-33, C-39, B reno language |
+| Scare lane | **H7** miss-cost extract | S1 or S5 | Crew-size shops |
+| LLC lane | **H4** entity + tax | W6 | `business_type` = LLC |
+
+---
+
+## 6) Script previews
+
+Shared company: **Harbor Peak Electric**, San Jose, electrical, OM **Maria**, Owner **James**.
+
+### H6 + W1 — nine-front map, collect clear (control)
 
 **Filled:**
 
 ```
 Maria
 
-Public file shows Harbor Peak Electric's next bond date about 67 days out (electrical, San Jose).
+The CSLB letter for Harbor Peak Electric covers a slice of the story. City business licenses where you work, entity filings, carrier renewals, and payroll dates sit on other desks and do not talk to each other.
 
-Most offices only watch the renewal letter. A 12-month calendar for the shop covers license, bond, and coverage on file, plus the dates that follow.
+Codicen builds one 12-month register for the shop across those fronts, with reminders before each date, so finished work stays clearer to collect on.
 
-Want the 12-month calendar for Harbor Peak Electric?
+Want that year map started for Harbor Peak Electric?
 ```
 
 **PlusVibe:**
@@ -185,422 +191,221 @@ Want the 12-month calendar for Harbor Peak Electric?
 ```
 {{first_name}}
 
-Public file shows {{company_name}}'s next {{next_item}} date about {{days_left}} days out ({{trade_plain}}, {{city}}).
+The CSLB letter for {{company_name}} covers a slice of the story. City business licenses where you work, entity filings, carrier renewals, and payroll dates sit on other desks and do not talk to each other.
 
-Most offices only watch the renewal letter. A 12-month calendar for the shop covers license, bond, and coverage on file, plus the dates that follow.
+Codicen builds one 12-month register for the shop across those fronts, with reminders before each date, so finished work stays clearer to collect on.
 
-Want the 12-month calendar for {{company_name}}?
+Want that year map started for {{company_name}}?
 ```
 
-**Email 2 proof:**
+---
+
+### H1 + W3 — multi-city
+
+```
+Maria
+
+When Harbor Peak Electric takes electrical work outside San Jose, each city can carry its own business-license date. That stack is not on the CSLB renewal letter.
+
+Want a 12-month city-license calendar for every city your crews actually work, plus the other hard fronts on one register?
+```
 
 ```
 {{first_name}}
 
-Starting the 12-month calendar for {{company_name}}. Front of that map:
+When {{company_name}} takes {{trade_plain}} work outside {{city}}, each city can carry its own business-license date. That stack is not on the CSLB renewal letter.
+
+Want a 12-month city-license calendar for every city your crews actually work, plus the other hard fronts on one register?
+```
+
+---
+
+### H3 + W2 — tender / public-works bid pack
+
+```
+James
+
+Public and agency bids usually expect more than a CSLB letter: DIR registration windows, city licenses, and paperwork that lives off the license file.
+
+Want a tender-ready 12-month map for Harbor Peak Electric that lines up those hard dates so bid packets leave the office with less scramble?
+```
+
+```
+{{first_name}}
+
+Public and agency bids usually expect more than a CSLB letter: DIR registration windows, city licenses, and paperwork that lives off the license file.
+
+Want a tender-ready 12-month map for {{company_name}} that lines up those hard dates so bid packets leave the office with less scramble?
+```
+
+---
+
+### H2 + W4 — pre-1978 / EPA (painter example)
+
+```
+Maria
+
+A lot of painting work in older California housing stock runs into EPA lead-safe dates the CSLB letter never shows, on top of city licenses where the crew shows up.
+
+Want a 12-month reno pack for Summit Coatings that puts EPA firm and renovator dates on the same calendar as city and license fronts?
+```
+
+```
+{{first_name}}
+
+A lot of {{trade_plain}} work in older California housing stock runs into EPA lead-safe dates the CSLB letter never shows, on top of city licenses where the crew shows up.
+
+Want a 12-month reno pack for {{company_name}} that puts EPA firm and renovator dates on the same calendar as city and license fronts?
+```
+
+---
+
+### H7 + S5 — miss-cost (crew)
+
+```
+Maria
+
+California can charge an uninsured employer $1,500 per employee on a stop order (Labor Code 3722). That kind of figure is why Codicen prints miss costs next to dates, not only the date itself.
+
+Want a 12-month register extract for Harbor Peak Electric that includes the hard fronts plus what a miss can cost, with reminders before each date?
+```
+
+```
+{{first_name}}
+
+California can charge an uninsured employer $1,500 per employee on a stop order (Labor Code 3722). That kind of figure is why Codicen prints miss costs next to dates, not only the date itself.
+
+Want a 12-month register extract for {{company_name}} that includes the hard fronts plus what a miss can cost, with reminders before each date?
+```
+
+---
+
+### H7 + S4 — project / payback scare (Owner, short)
+
+```
+James
+
+In one published California case, a contractor faced paying back about $18.3M after a license lapse on an $18M job (Judicial Council v. Jacobs Facilities). Paperwork, not craft, drove it.
+
+Want a 12-month Codicen register for Harbor Peak Electric that maps the hard deadlines behind bids and contracts, with reminders before each one?
+```
+
+```
+{{first_name}}
+
+In one published California case, a contractor faced paying back about $18.3M after a license lapse on an $18M job (Judicial Council v. Jacobs Facilities). Paperwork, not craft, drove it.
+
+Want a 12-month Codicen register for {{company_name}} that maps the hard deadlines behind bids and contracts, with reminders before each one?
+```
+
+---
+
+### H4 — LLC entity + tax
+
+```
+Maria
+
+For an LLC like Harbor Peak Electric, Statement of Information and Franchise Tax Board dates sit on different clocks from the CSLB letter.
+
+Want those entity fronts on one 12-month calendar with the city and carrier dates your office also has to watch?
+```
+
+```
+{{first_name}}
+
+For an LLC like {{company_name}}, Statement of Information and Franchise Tax Board dates sit on different clocks from the CSLB letter.
+
+Want those entity fronts on one 12-month calendar with the city and carrier dates your office also has to watch?
+```
+
+---
+
+### Email 2 — easy proof slice (same for all H-offers)
+
+```
+Maria
+
+Starting Harbor Peak Electric's year map. From the public CSLB file alone, without anything from you:
+
+License: 03/14/2027
+Bond: 01/06/2027
+Coverage on file: 08/22/2026
+
+City licenses, EPA or DIR dates, entity filings, and the rest of the hard fronts need a short call so we build them for how Harbor Peak Electric actually works.
+```
+
+```
+{{first_name}}
+
+Starting {{company_name}}'s year map. From the public CSLB file alone, without anything from you:
 
 License: {{license_exp}}
 Bond: {{bond_exp}}
 Coverage on file: {{coverage_exp}}
 
-The rest of the year and the reminder timing are clearer on a short call.
+City licenses, EPA or DIR dates, entity filings, and the rest of the hard fronts need a short call so we build them for how {{company_name}} actually works.
 ```
 
 ---
 
-### O2 — Letter-vs-file gap card
-
-**Filled:**
+### Email 3 — call for the hard map
 
 ```
 Maria
 
-Harbor Peak Electric's renewal letter mostly tracks the license. The public file also carries a bond date about 67 days out, plus coverage on file.
+Those three dates were the easy slice.
 
-Want a one-page gap card for Harbor Peak Electric that labels letter vs file for those items?
+On a short phone walkthrough (about 10 to 12 min) I can map the hard fronts for Harbor Peak Electric (cities you work, EPA or public-works dates if they apply, entity and carrier items) and show how 60, 30, and 7 day reminders would land so the office sees them in time for permits, pay, and bids.
+
+Can I try you at (408) 555-0142, or is there a better number?
 ```
-
-**PlusVibe:**
-
-```
-{{first_name}}
-
-{{company_name}}'s renewal letter mostly tracks the license. The public file also carries a {{next_item}} date about {{days_left}} days out, plus the other two public items.
-
-Want a one-page gap card for {{company_name}} that labels letter vs file for those items?
-```
-
-**Email 2 proof:**
 
 ```
 {{first_name}}
 
-Gap card draft for {{company_name}}:
+Those three dates were the easy slice.
 
-Letter side: license {{license_exp}}
-File side: bond {{bond_exp}} | coverage on file {{coverage_exp}}
-
-Happy to walk how reminders cover the file side on a short call.
-```
-
----
-
-### O3 — Next-date prep pack (bond-hot example)
-
-Segment: `next_item` = bond, `days_left` ≤ 60 (filled at 45).
-
-**Filled:**
-
-```
-Maria
-
-Harbor Peak Electric's next bond date on the public file is about 45 days out.
-
-Want a bond prep pack for the office: that date, the surety on record, and the license plus coverage-on-file dates lined up next to it?
-```
-
-**PlusVibe:**
-
-```
-{{first_name}}
-
-{{company_name}}'s next {{next_item}} date on the public file is about {{days_left}} days out.
-
-Want a {{next_item}} prep pack for the office: that date, who sits on record for it, and the other two public dates lined up next to it?
-```
-
-**Email 2 proof:**
-
-```
-{{first_name}}
-
-Bond prep pack for {{company_name}}:
-
-Bond: {{bond_exp}}{% if surety_short != blank %} ({{surety_short}}){% endif %}
-License: {{license_exp}}
-Coverage on file: {{coverage_exp}}
-
-On a short call we can set who in the office owns each and when reminders should land.
-```
-
-*(Swap “bond” language automatically via `next_item` for license-hot or coverage-hot packs.)*
-
----
-
-### O4 — Who-owns-what desk sheet
-
-**Filled:**
-
-```
-Maria
-
-In most electrical shops in San Jose, license dates point one place, bond dates another, coverage on file another. Harbor Peak Electric's next public date is the bond, about 67 days out.
-
-Want a who-owns-what desk sheet filled for Harbor Peak Electric?
-```
-
-**PlusVibe:**
-
-```
-{{first_name}}
-
-In most {{trade_plain}} shops in {{city}}, license dates point one place, bond dates another, coverage on file another. {{company_name}}'s next public date is the {{next_item}}, about {{days_left}} days out.
-
-Want a who-owns-what desk sheet filled for {{company_name}}?
-```
-
-**Email 2 proof:**
-
-```
-{{first_name}}
-
-Desk sheet draft for {{company_name}}:
-
-License → CSLB record → {{license_exp}}
-Bond → surety on file → {{bond_exp}}
-Coverage on file → carrier on record → {{coverage_exp}}
-
-We can add city and trade rows on a short call once you name them.
-```
-
----
-
-### O5 — Reminder dry-run
-
-**Filled:**
-
-```
-Maria
-
-Harbor Peak Electric's next bond date is about 67 days out on the public file.
-
-Want a dry-run of the 60, 30, and 7 day reminder texts timed to that date for your office?
-```
-
-**PlusVibe:**
-
-```
-{{first_name}}
-
-{{company_name}}'s next {{next_item}} date is about {{days_left}} days out on the public file.
-
-Want a dry-run of the 60, 30, and 7 day reminder texts timed to that date for your office?
-```
-
-**Email 2 proof** (swap “bond” lines when `next_item` differs):
-
-```
-{{first_name}}
-
-Dry-run for {{company_name}} (next {{next_item}} {{next_date}}):
-
-About 60 days out: Bond date for {{company_name}} is on the calendar. Flag the office.
-About 30 days out: 30 days to the bond date on file. Confirm who is handling it.
-About 7 days out: One week to the bond date on file. Last office check.
-
-Public dates next to that:
-License {{license_exp}} | Bond {{bond_exp}} | Coverage on file {{coverage_exp}}
-
-A short call turns this dry-run into a live calendar.
-```
-
----
-
-### O6 — 90-day permit-clear view
-
-**Filled:**
-
-```
-Maria
-
-For permit pulls at Harbor Peak Electric over the next stretch, it helps to see every public date inside about 90 days in one ordered list. Your next one is the bond, about 67 days out.
-
-Want that 90-day permit-clear view for Harbor Peak Electric?
-```
-
-**PlusVibe:**
-
-```
-{{first_name}}
-
-For permit pulls at {{company_name}} over the next stretch, it helps to see every public date inside about 90 days in one ordered list. Your next one is the {{next_item}}, about {{days_left}} days out.
-
-Want that 90-day permit-clear view for {{company_name}}?
-```
-
-**Email 2:** ordered dates that fall inside 90 days (subset of the three), then: “Full 12 months on a short call.”
-
----
-
-### O7 — Collect-clear year map (Owner)
-
-**Filled:**
-
-```
-James
-
-Public file shows Harbor Peak Electric's next bond date about 67 days out.
-
-Want a 12-month collect-clear map for Harbor Peak Electric so license, bond, and coverage on file sit in front of the office before finished work hits paperwork checks?
-```
-
-**PlusVibe:**
-
-```
-{{first_name}}
-
-Public file shows {{company_name}}'s next {{next_item}} date about {{days_left}} days out.
-
-Want a 12-month collect-clear map for {{company_name}} so license, bond, and coverage on file sit in front of the office before finished work hits paperwork checks?
-```
-
----
-
-### O8 — Bid-ready date map (Owner)
-
-**Filled:**
-
-```
-James
-
-When Harbor Peak Electric puts a bid together, the packet usually assumes license, bond, and coverage on file are already mapped. Next public date is the bond, about 67 days out.
-
-Want a bid-ready date map for the next 12 months?
-```
-
-**PlusVibe:**
-
-```
-{{first_name}}
-
-When {{company_name}} puts a bid together, the packet usually assumes license, bond, and coverage on file are already mapped. Next public date is the {{next_item}}, about {{days_left}} days out.
-
-Want a bid-ready date map for the next 12 months?
-```
-
----
-
-### O9 — Office desk pack
-
-**Filled:**
-
-```
-Maria
-
-When the qualifier is on a job, Harbor Peak Electric's office still has to watch dates. Next bond date on the public file is about 67 days out.
-
-Want an office desk pack: 12-month calendar the office holds, with reminders before each date?
-```
-
-**PlusVibe:**
-
-```
-{{first_name}}
-
-When {% if principal_first != blank %}{{principal_first}} is{% else %}the qualifier is{% endif %} on a job, {{company_name}}'s office still has to watch dates. Next {{next_item}} date on the public file is about {{days_left}} days out.
-
-Want an office desk pack: 12-month calendar the office holds, with reminders before each date?
-```
-
----
-
-### O10 — LLC entity pack
-
-Segment: LLC only.
-
-**Filled:**
-
-```
-Maria
-
-For an LLC like Harbor Peak Electric, the renewal letter is still only one piece. Bond and coverage on file sit beside the license on the public record. Next date up is the bond, about 67 days out.
-
-Want an LLC entity pack: a 12-month map built for how your entity actually shows up on file?
-```
-
-**PlusVibe:**
-
-```
-{{first_name}}
-
-For an LLC like {{company_name}}, the renewal letter is still only one piece. Bond and coverage on file sit beside the license on the public record. Next date up is the {{next_item}}, about {{days_left}} days out.
-
-Want an LLC entity pack: a 12-month map built for how your entity actually shows up on file?
-```
-
----
-
-### O11 — Multi-class map
-
-Segment: `class_count` ≥ 2.
-
-**Filled:**
-
-```
-Maria
-
-Harbor Peak Electric carries more than one class on the license. Dates still hide across letter, bond, and coverage on file. Next public date is the bond, about 67 days out.
-
-Want one 12-month map across every class, not a separate sticky note per trade?
-```
-
-**PlusVibe:**
-
-```
-{{first_name}}
-
-{{company_name}} carries more than one class on the license. Dates still hide across letter, bond, and coverage on file. Next public date is the {{next_item}}, about {{days_left}} days out.
-
-Want one 12-month map across every class, not a separate sticky note per trade?
-```
-
----
-
-### O12 — Coverage-weighted trade pack (roofing example)
-
-Segment: C-39 / C-20 / C-8; prefer when coverage is hot or always name it.
-
-**Filled (roofer, coverage hot, 52 days):**
-
-```
-Maria
-
-For a roofing shop like Lakeview Roofing in Fresno, coverage on file is not side paperwork. Public file shows that date about 52 days out.
-
-Want a 12-month trade pack that treats coverage on file, license, and bond as first-class dates for the office?
-```
-
-**PlusVibe:**
-
-```
-{{first_name}}
-
-For a {{trade_plain}} shop like {{company_name}} in {{city}}, coverage on file is not side paperwork. Public file shows the next {{next_item}} date about {{days_left}} days out.
-
-Want a 12-month trade pack that treats coverage on file, license, and bond as first-class dates for the office?
-```
-
----
-
-### Email 3 — shared closer (all offers)
-
-```
-{{first_name}}
-
-That proof note was only the front of {{company_name}}'s year.
-
-On a short phone walkthrough (about 10 to 12 min) I can show the rest of the map and how texts and emails would land before each date so the office sees them in time for permits, pay, and bids.
+On a short phone walkthrough (about 10 to 12 min) I can map the hard fronts for {{company_name}} (cities you work, EPA or public-works dates if they apply, entity and carrier items) and show how 60, 30, and 7 day reminders would land so the office sees them in time for permits, pay, and bids.
 
 Can I try you at {{phone}}, or is there a better number?
 ```
 
 ---
 
-## 7) Objections (short)
+## 7) Objections
 
 | They say | We say |
 |----------|--------|
-| “We already have those dates.” | Good for one or two items. These offers are the year map, the gap card, the desk sheet, or the reminder dry-run — not a copy of the letter. |
-| “CSLB already mails us.” | That is why the gap card / file side exists. Want that one-pager? |
-| “Just email me details.” | Happy to. Worth 15 minutes to see the full map live? |
-| “Not right now.” | Understood. With about {{days_left}} days to the next {{next_item}} date, can we check back before that window gets tight? |
+| “We already have license/bond dates.” | Good — those are the easy three. Codicen is for city, EPA, DIR, entity, and carrier dates the letter does not carry. |
+| “CSLB already mails us.” | The letter is one front. Nine fronts do not mail as one packet. |
+| “Just email the hard list.” | We need the cities you work and a few work-type answers to build it right. Worth 15 minutes? |
 | Price | We tailor every calendar to the business, so pricing depends on how complex yours is: how many licenses, entities, cities and crews you have. |
-
-Never promise they will “never miss” a deadline, payment, or bid.
 
 ---
 
 ## 8) Inbox / never-say
 
-- Phone first (10–12 min) → Teams 30 min demo  
-- CC Haroon (haroon.elgabalawy@codicen.com, 626-634-9044) and Idris (idris.elgabalawy@codicen.com, 626-390-1958)  
-- Hours: 8am–5pm PDT  
-- Never: prices, client results, file/renew/pay, legal advice, CSLB endorsement, “your license is at risk/lapsed,” fake urgency, Email 1 call ask  
+- Phone 10–12 min → Teams 30 min (Haroon / Idris, 8am–5pm PDT)  
+- CC: haroon.elgabalawy@codicen.com · 626-634-9044 · idris.elgabalawy@codicen.com · 626-390-1958  
+- Never: prices, client results, file/renew/pay, legal advice, CSLB endorsement, “**your** license is at risk/lapsed,” guarantee they will never miss, Email 1 call ask  
+
+Cited scare figures are OK as **general** facts with sources. Not as a diagnosis of their file.
 
 ---
 
-## 9) Wave plan
+## 9) Checklist
 
-1. **Wave 1a:** O1 vs O2 vs O5 on ICP1 OM ≤120d (even split).  
-2. **Wave 1b:** Winner vs O3 on bond-hot ≤60d.  
-3. **Wave 2:** O7 Owner lane + O12 trade lane.  
-4. **Wave 3:** O9 / O10 / O11 on matching firmographic cuts.  
-5. City/EPA/DIR only after they name cities.
-
----
-
-## 10) Checklist
-
-- [ ] Segment cut matches the offer ID  
-- [ ] Email 1 sells a **named asset**, not “your own dates back to you”  
-- [ ] Countdown factual if used  
+- [ ] Email 1 names **hard** fronts (city / EPA / DIR / SOS / FTB / carriers / miss-cost)  
+- [ ] Angle uses facility, service, client, tender, project, outcome, or cited scare  
+- [ ] Email 1 does **not** sell “your three public dates” as the gift  
+- [ ] Email 2 = easy CSLB trio only  
+- [ ] Email 3 = call to build hard 12-month map + reminders  
 - [ ] Spam-guard + never-say  
-- [ ] Email 2 = proof of *that* offer  
-- [ ] Email 3 = phone for rest + reminders  
 
 ---
 
 ## Premise again
 
-**Do not** offer a photocopy of the public file.  
-**Do** segment the list, pick a job-to-be-done (gap card, prep pack, dry-run, permit-clear view, collect-clear map, bid map, desk pack, LLC pack, multi-class map, trade pack, or full-year calendar), prove it small, then call to install the reminder system.
+**Public file = free proof after yes.**  
+**Hard nine fronts + miss costs + reminders = the product and the Email 1 offer.**  
+**Angles live in how they work** (facility, service, client, tender, project) and **what a miss can cost** — not in photocopying the CSLB letter.
