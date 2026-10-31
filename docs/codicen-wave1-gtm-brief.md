@@ -6,11 +6,11 @@ Third-grade rule: if a 9-year-old cannot say what we are offering in one sentenc
 
 Spam / templating SOPs: [SOP.md](../05-copy-messaging-framework-agent-5/SOP.md), [SOP-spam-guard.md](../05-copy-messaging-framework-agent-5/SOP-spam-guard.md), [SOP-plusvibe-templating.md](../05-copy-messaging-framework-agent-5/SOP-plusvibe-templating.md).
 
-Related offer strategy (Google Doc): [Codicen — Front-End Offers](https://docs.google.com/document/d/1XT3EWMVvf-k7rsPlNqANC_sozXwyQpCz0xiZIb3h68Y).
+Related earlier offer notes: [Codicen — Front-End Offers](https://docs.google.com/document/d/1XT3EWMVvf-k7rsPlNqANC_sozXwyQpCz0xiZIb3h68Y) — **Wave 1 offer below overrides the old “send three dates” front door.**
 
 ---
 
-## 0) Premise (what this whole thing is trying to give them)
+## 0) Premise (what this is trying to give them)
 
 ### Who Codicen is
 
@@ -18,40 +18,41 @@ Related offer strategy (Google Doc): [Codicen — Front-End Offers](https://docs
 
 In plain words:
 
-1. They look at what that contractor must keep current (license, bond, coverage on file, and later city / trade items once the contractor shares more).
-2. They build a **12-month calendar** of those dates for that business.
-3. They **text and email** the office **60, 30, and 7 days** before each date.
-4. They **do not** file renewals, pay bonds, sell coverage, give legal advice, or work for the state.
+1. Build a **12-month deadline calendar** for that business (license, bond, coverage on file, then city / trade items once they share more).
+2. **Text + email** the office **60 / 30 / 7 days** before each date.
+3. They **do not** file renewals, pay bonds, sell coverage, give legal advice, or work for the state.
 
-Based in California. Serve the whole state. Do **not** say how long they have been in business.
+### Why the old script failed
 
-### Why anyone cares (the hole)
+Saying “want me to send you three dates?” is weak.
 
-Most shops think their system is:
+Those dates already sit on a **public file**. Many offices already have a letter, a bond person, or a sticky note. Handing them a copy of data they already own does not feel like a favor.
 
-> the renewal letter in the mail + the bond person
+### What we offer instead (Wave 1 front door)
 
-That letter is mainly about the **license**. Other dates that can stop permits or pay live on the **public file** (and later in cities / carriers). Those dates do not all arrive in that one envelope.
+**Promise the thing they do not have:** a **full-year map of dates for their shop**, plus how reminders would land before each one.
 
-**Codicen’s job in cold email is not “sell a calendar.”**  
-It is: **make that hole visible → send their three public dates → walk the dates on a short phone call → then book the Teams demo.**
+**Deliver after yes (proof slice):** send **three** public dates (license / bond / coverage on file) so they see we are real.
+
+**Then the call:** walk the rest of the year + how 60/30/7 reminders work so the office sees each date before it lands — permits, pay, and bids stay clear.
 
 ### One-line premise
 
-We are not selling “dates.” We are showing a California contractor office that the mail system is incomplete — and offering to send their three public dates so keeping permits and jobs moving is easier — then talking it through on a short call.
+We mail shops whose next public date is inside **120 days**, name that countdown in plain words, offer a **12-month calendar for their company**, prove it with three dates after they say yes, then call to show the rest and the reminder flow.
 
-### Sales path (Wave 1 vs paid)
+### Sales path
 
 | Step | What happens |
 |------|----------------|
-| Cold Email 1 | Tease the hole. Ask for an easy **yes**. No product pitch. No call ask. |
-| After yes | Send **license / bond / coverage on file** dates (public CSLB file). |
-| ~1 day later | Ask to **confirm a phone number** for a 10–12 min walkthrough of those dates. |
-| Phone call | Walk the dates. No hard pitch required. |
-| Teams demo | 30 min with Haroon / Idris (8am–5pm PDT). Present demo, understand situation. |
-| After agreement | Build 12-month calendar. Second call walks every deadline. Reminders 60/30/7. |
+| List build | Active CA CSLB + trade + title + **next public date ≤ 120 days** |
+| Cold Email 1 | Countdown + offer **12-month calendar**. Easy yes. No call ask. |
+| After yes | Send **3** dates (proof). Soft: “this is the front of the year map.” |
+| Email 3 / same thread | Confirm phone for ~10–12 min to walk **the rest** + reminder setup |
+| Phone | Walk dates + how texts/emails would fire. No hard price dump required. |
+| Teams demo | 30 min Haroon / Idris (8am–5pm PDT) |
+| After agreement | Full calendar build. Second call. Live 60/30/7. |
 
-Pricing only on a call. Email reply if they ask price:
+Pricing only on a call:
 
 > We tailor every calendar to the business, so pricing depends on how complex yours is: how many licenses, entities, cities and crews you have.
 
@@ -65,19 +66,20 @@ Pricing only on a call. Email reply if they ask price:
 - Active CSLB contractor (CLEAR / renewable)
 - Trade in the list below
 - Title: **Office Manager first**, then Owner / CEO / qualifier (RMO)
+- **Hot window (Wave 1 list filter):** nearest of license / bond / coverage-on-file expiration is **≤ 120 days** out (and still in the future — do not cold-mail already-lapsed as “you are lapsed”)
+
+The ~23k “special / near-term” band is the **priority pool**. Firmographic size/title still apply on top.
 
 ### Size bands
 
 | Band | Headcount | Who we email | Why |
 |------|-----------|--------------|-----|
-| **ICP 1 (Wave 1 control)** | 10–50 | Office Manager → Owner / RMO | Crew + office, no compliance team. Best fit. |
+| **ICP 1 (Wave 1 control)** | 10–50 | Office Manager → Owner / RMO | Crew + office, no compliance team |
 | ICP 2 | 5–9 | Owner / RMO | Owner still runs the office |
 | ICP 3 | 50–100 | Office / Ops Manager | More dates, still no department |
-| Kill-test only | 1–4 | Owner | Cap volume; replies ≠ buyers |
+| Kill-test only | 1–4 | Owner | Cap volume |
 
-Do **not** mix 1–4 into ICP 1. Do **not** mix under-10 into ICP 1.
-
-### Trade bands (say these words in copy, not the code alone)
+### Trade bands (plain words in copy)
 
 | Code | Say in email |
 |------|----------------|
@@ -91,83 +93,59 @@ Do **not** mix 1–4 into ICP 1. Do **not** mix under-10 into ICP 1.
 
 Dedup on CSLB number.
 
-### Allowed list filters (firmographic only)
+### How countdown personalization works
 
-- Employee band, trade, title, entity type (LLC / Corp)
-- “Coverage on file” as a **has a crew** proxy when headcount is missing
+From CSLB public fields, compute for each company:
+
+| Var | Meaning |
+|-----|---------|
+| `next_item` | Which of the three is soonest: `license` / `bond` / `coverage on file` |
+| `next_date` | That date (MM/DD/YYYY) |
+| `days_left` | Whole days until `next_date` (1–120 for Wave 1) |
+
+**Copy rule:** state the countdown as a **fact from the public file**, not a threat.
+
+Safe: “Public file shows {{company_name}}’s next {{next_item}} date about {{days_left}} days out.”
+
+Banned in cold copy: at risk, lapsed, under audit, urgent, “coming due,” “expires soon,” “act now,” that *they* are in trouble.
 
 ### Do not mail
 
-- Outside California
-- Not a contractor
-- 100+ employees
-- People who only want someone to **file / fix** a suspended license
-- Current Codicen clients / known leads (suppress)
-
-### Hot signals (ops only — not cold openers)
-
-Onboarding hot accounts: expiring or expired bond, coverage, CSLB license (often yearly).
-
-Use those for **list priority / later waves**, never as:
-
-- “your license is coming due”
-- “urgent”
-- “at risk / lapsed”
+- Outside California / not a contractor / 100+
+- Already expired *and* framed as “you are lapsed” (ops may handle separately; not this sequence)
+- People who only want someone to **file / fix** a suspension
+- Current clients / known leads (suppress)
 
 ---
 
-## 2) Persona (who we are talking to)
+## 2) Persona (who we talk to)
 
-### Primary — Office Manager (ICP 1, Wave 1)
+### Primary — Office Manager (ICP 1)
 
 **Job:** keep the office moving while the qualifier is on a job.
 
-**Language they use:** permits, paperwork, mail, “the bond guy,” “CSLB sent something,” jobs, crews.
-
-**Language they do not use:** compliance platform, obligations library, waterfall, enrichment.
-
-**Internal monologue (messy — reuse these thoughts, do not translate into marketing):**
+**Internal monologue:**
 
 1. “I’ll deal with the mail when it shows up.”
 2. “The boss is on a job; this can wait.”
 3. “We already have a system… I think.”
 4. “If something’s wrong, someone would tell us.”
 5. “I don’t want another tool. I just don’t want a surprise.”
-6. “The bond person handles that stuff.”
-7. “We’re fine unless the letter says otherwise.”
-8. “Don’t make me look stupid in front of the boss.”
+6. “Don’t make me look stupid in front of the boss.”
 
-| | In their words |
-|--|----------------|
-| **Pain** | Dates live in mail / someone else’s head; the office finds out late |
-| **Fear** | A job or permit stops; the boss blames the office |
-| **Gain** | Know what’s coming without hunting; office has the list while the field is busy |
+| | Their words |
+|--|-------------|
+| **Pain** | Dates live in mail / someone else’s head |
+| **Fear** | Job or permit stops; boss blames the office |
+| **Gain** | See the year of dates before each one lands |
 
-**Awareness for cold:** Level 1–2 (unaware → problem-aware). Message = observation + easy yes. Not a product demo.
+### Secondary — Owner / CEO / RMO
 
-### Secondary — Owner / CEO / RMO (ICP 2 default)
-
-**Job:** keep pulling work and collecting pay.
-
-**Internal monologue:**
-
-1. “As long as we’re licensed, we’re fine.”
-2. “My bond person / broker has this.”
-3. “I don’t have time for another meeting.”
-4. “If it mattered, I’d have heard.”
-5. “Just don’t stop a job or a payment.”
-
-| | In their words |
-|--|----------------|
+| | Their words |
+|--|-------------|
 | **Pain** | Paperwork they do not watch day to day |
-| **Fear** | Something on paper kills a job or pay |
-| **Gain** | Stay clear to work without babysitting paperwork |
-
-### Decision makers (from onboarding)
-
-Ideal: **Office Manager or CEO**.  
-Qualify with public CSLB license # (do **not** ask them for it — look it up).  
-If not a buyer but could refer: “Do you know of anyone who could use our services?”
+| **Fear** | Paper kills a job, a payment, or a bid |
+| **Gain** | Stay clear to work and collect without babysitting |
 
 ---
 
@@ -175,283 +153,329 @@ If not a buyer but could refer: “Do you know of anyone who could use our servi
 
 ### Core truth
 
-They will **not** pay for “a calendar” or “a reminder schedule.”
+They will not care about “I can forward you three public dates.”
 
-They **will** protect:
+They will care about:
 
-| Who | What they want on Monday | What they think already covers it |
-|-----|--------------------------|-----------------------------------|
-| Owner / RMO | Keep pulling permits. Keep collecting pay. | CSLB mail + the bond guy |
-| Office Manager | Not miss the date while the qualifier is on a job | The envelope, a spreadsheet, a reminder |
+> a full year of dates for **my** shop, and someone who pings the office before each one
 
-### Locked Wave 1 asset (same thing, different want)
+### Locked Wave 1 offer (promise → proof → call)
 
-From the **public CSLB file**, within ~48 hours of a yes:
+| Stage | What we say | What we actually send / do |
+|-------|-------------|----------------------------|
+| **Email 1 promise** | 12-month deadline calendar for {{company_name}} | Nothing yet — earn yes |
+| **After yes (proof)** | “Front of that map” | License + bond + coverage-on-file dates |
+| **Call** | Rest of the year + how 60/30/7 reminders work | Phone 10–12 min → Teams demo |
 
-1. License date  
-2. Bond date  
-3. Coverage on file date  
+City / EPA / DIR dates still need them to share more — promise on the call as “we add these once you name cities,” not as Email 1 deliverable.
 
-**Never promise in cold copy:** city licenses, EPA, DIR / public works (need them to name cities / share more). That is Offer D / post-call only.
+### Offer cards (same calendar, different want)
 
-### Offer cards
+| Offer | Want in their words | Who | Wave |
+|-------|---------------------|-----|------|
+| **A — Permits** | Keep pulling permits through the next date and the ones after | OM | Wave 1 control |
+| **B — Pay / collect** | Stay clear so finished work stays collectible | Owner | ICP 2 / Owner lines |
+| **C — Bids / tenders** | Stay clear to bid and take the next job | Owner / OM on public-works-heavy trades | Test after A |
+| **E — Office while boss is out** | Office sees every date while qualifier is on site | OM | Wave 2 |
+| **D — City / EPA / DIR** | Keep specialty work | Named cities | Not cold Email 1 |
 
-| Offer | Want (their words) | Who | Wave |
-|-------|--------------------|-----|------|
-| **A — Permits** (control) | Keep pulling permits | Office Manager | Wave 1 |
-| **B — Stay able to work / collect** | Keep jobs and pay moving | Owner / RMO | ICP 2 default |
-| **C — Letter isn’t everything** | See what the renewal letter doesn’t show | Office Manager (if “CSLB already mails us”) | Wave 2 if A dies |
-| **E — Office while boss is out** | Office has the dates while qualifier is on site | Office Manager | Wave 2 |
-| **D — City / EPA / public works** | Keep specialty work | Anyone who named cities | **Not Wave 1 cold** |
+### Why this is better than “send dates”
 
-### Conversion test (one offer, two paths)
-
-Same list. Same Offer A. Even split. Both end on **confirmed phone + completed call**, then Teams demo.
-
-| Method | Flow | When to use |
-|--------|------|-------------|
-| **1 — Slice first** | yes → email 3 dates (no call ask) → ~1 day later ask to confirm phone | Default / always available |
-| **2 — Pre-built link** | yes → unique URL with 3 dates + confirm number | Only if links can be pre-built in bulk |
-
-**What counts as a lead:** they confirm a number **and** we complete (or lock) the phone call. Raw “yes” / click with no number = not a lead to hand Codicen.
-
-### Paid product (only after call)
-
-12-month deadline calendar + texts/emails 60/30/7.  
-Never price in email. Never promise Codicen files, renews, or pays anything.
+| Old | New |
+|-----|-----|
+| Asset = copy of public file | Asset = **year map + reminder system** |
+| Feels like spam with their own data | Feels like a service for the next 12 months |
+| Yes → dump → awkward call | Yes → proof slice → call to unlock the rest |
 
 ---
 
-## 4) Angles (how we say the offer)
+## 4) Angles (how we say it)
 
-One idea per email. Third-grade clear. Soft timing only (“before your next permit pull”) — never fake urgency.
+One idea per email. Soft countdown. No scare.
 
-| # | Angle | One-sentence idea |
-|---|-------|-------------------|
-| 1 | **Letter hole** | Renewal mail is mostly one piece. Other pieces sit on the public file. |
-| 2 | **Permit / job outcome** | You need those pieces clear to keep pulling permits / keep work moving. |
-| 3 | **Office vs field** | When the boss is on a job, the office still needs the dates. |
-| 4 | **Trade in plain words** | For electricians / plumbers / HVAC / etc. in {{city}}, same three items usually matter. |
-| 5 | **Soft timing** | Tie to *their* calendar, not “expires soon / urgent / at risk.” |
+| # | Angle | One sentence |
+|---|-------|--------------|
+| 1 | **Countdown + year map** | Your next public date is ~X days out; want the full 12-month map for the shop? |
+| 2 | **Permits** | So the next permit pull is not the moment you learn a date was hiding |
+| 3 | **Pay / collect** | So pay on finished work is not blocked by a date the letter did not spell out |
+| 4 | **Bids / tenders** | So you stay clear to bid when the next job shows up |
+| 5 | **Office vs field** | So the office holds the year while the qualifier is on a job |
+| 6 | **Letter hole** | The renewal letter is one piece; the year map covers the rest |
 
-Wave 1 control stack: **Offer A + Angle 1 or 2 + one teaser snippet**.
+Wave 1 control: **Offer A + Angle 1** (countdown + year map).  
+Swap outcome line for B / C / E without changing the asset.
 
 ---
 
-## 5) Custom snippets (relevance without dumping)
+## 5) Custom snippets
 
-### Relevance ladder
+### Email 1 — required personalization
 
-| Level | Fields | Use where |
-|-------|--------|-----------|
-| Base | `company_name`, `city`, `trade_plain` | Every send |
-| Better | `principal_first`, `business_type` | Office vs field angle |
-| Magnet | `license_exp`, `bond_exp`, `coverage_exp`, `surety_short` | **Email 2 only** |
-| Later | cities they name | Offer D / full calendar |
+Use **all** of:
 
-### Email 1 — tease only (pick ONE)
+- `{{company_name}}`, `{{city}}`, `{{trade_plain}}`
+- `{{next_item}}`, `{{days_left}}` (from ≤120d filter)
 
-Safe teaser patterns:
+Optional: `{{principal_first}}` for Offer E.
 
-- `{{company_name}}` in `{{city}}` (`{{trade_plain}}`)
-- `{{principal_first}}` on a job / office holds the mail
-- “public file shows a bond on record” (**no date**, no license #)
-- “coverage on file” (**no dates**)
+**Never in Email 1:** license number, full 12-date dump, “comp,” Teams, price, at-risk language, call ask.
 
-**Never in Email 1:**
-
-- License number  
-- Full date list  
-- “workers’ comp” / “comp”  
-- Product name dump / demo / Teams  
-- Price  
-- “at risk / lapsed / coming due”  
-- Call ask  
-
-### Email 2 — magnet (after yes)
+### Email 2 — proof slice only
 
 ```
 License: {{license_exp}}
-Bond{{#if surety_short}} ({{surety_short}}){{/if}}: {{bond_exp}}
+Bond: {{bond_exp}}
 Coverage on file: {{coverage_exp}}
 ```
 
-Say **coverage on file**, not “comp,” in outbound copy.
+One line: “This is the front of the 12-month map. The rest is easier on a short call.”
 
-### Trade plain map (for `trade_plain`)
+### PlusVibe vars (additions)
 
-| CSLB class | `trade_plain` |
-|------------|---------------|
-| B | general building |
-| C-10 | electrical |
-| C-36 | plumbing |
-| C-20 | HVAC |
-| C-39 | roofing |
-| C-33 | painting |
-| C-8 | concrete |
+| Var | Source |
+|-----|--------|
+| `next_item` | soonest of license / bond / coverage |
+| `next_date` | that date |
+| `days_left` | integer 1–120 |
+| `license_exp`, `bond_exp`, `coverage_exp` | Email 2 |
+| `surety_short` | optional Email 2 |
+| `phone` | Email 3 |
+| `cslb_number` | **ops only** — never Email 1 |
 
 ---
 
 ## 6) Script system
 
-### Structure every cold email follows
+**their next date → why a year map beats a letter → offer calendar → easy yes**  
+→ proof 3 dates → call for rest + reminders
 
-**their thought → their reality → soft offer → easy CTA**
-
-```
-Target ICP1 OM + trade
-  → Persona pain / fear / gain
-    → Offer A (permits)
-      → One angle
-        → One CSLB teaser snippet
-          → Email 1 easy yes
-            → Email 2 three dates
-              → Email 3 confirm phone
-                → Phone walkthrough
-                  → Teams demo
-```
-
-### Locked CTAs
+Locked CTAs:
 
 | Email | CTA |
 |-------|-----|
-| 1 | “Want me to send those three dates?” / “Reply yes and I’ll send them.” |
-| 2 | No call ask yet (Method 1). Just deliver the dates. |
-| 3 | Confirm `{{phone}}` or a better number for ~10–12 min phone walkthrough. |
+| 1 | “Want the 12-month calendar for {{company_name}}?” / “Reply yes and I’ll start it.” |
+| 2 | Deliver 3 dates. Soft bridge to call — or wait for Email 3. |
+| 3 | Confirm `{{phone}}` for ~10–12 min to walk the rest + reminder flow. |
 
-### Style locks (spam-guard)
-
-- No `Hi` / `Hey` / `Hello`
-- No em dashes
-- No ALL CAPS
-- Scan banned tokens (`get`, `now`, `soon`, `urgent`, `insurance`, `open`, `deal`, `free` / `no cost`, etc.) — see SOP
-- Under ~60–80 words for Email 1 when possible
-- Sound like a person, not a brochure
+Style: no Hi/Hey/Hello, no em dashes in bodies, spam-scan every send.
 
 ---
 
-## 7) Full scripts (Wave 1)
+## 7) Script previews (ready to read)
 
-Replace Liquid vars in PlusVibe. Spintax optional; keep one `{{variable}}` per spintax section.
+Filled example company for reading: **Harbor Peak Electric**, San Jose, electrical, next item = bond, **67 days** out. Office Manager = Maria.
 
-### Email 1 — Variant A1 (Offer A + letter hole) — Wave 1 control
+---
 
-**Subject ideas (pick one, spam-scan):**  
-`{{company_name}} permit dates` · `three dates for {{company_name}}` · `{{city}} {{trade_plain}} dates`
+### Email 1 — A1 (control): countdown + year map + permits
+
+**Subject:** `Harbor Peak Electric next 12 months`
+
+**How it reads (filled):**
+
+```
+Maria
+
+Public file shows Harbor Peak Electric's next bond date about 67 days out (electrical, San Jose).
+
+Most offices only watch the renewal letter. That letter is one piece. A 12-month calendar for the shop covers license, bond, and coverage on file, plus the dates that follow.
+
+Want the 12-month calendar for Harbor Peak Electric?
+```
+
+**PlusVibe:**
 
 ```
 {{first_name}}
 
-For {{company_name}} in {{city}} ({{trade_plain}}), a lot of offices run on the renewal letter plus the bond person.
+Public file shows {{company_name}}'s next {{next_item}} date about {{days_left}} days out ({{trade_plain}}, {{city}}).
 
-That letter is mostly one piece. Two other items on the public file still matter for pulling permits.
+Most offices only watch the renewal letter. That letter is one piece. A 12-month calendar for the shop covers license, bond, and coverage on file, plus the dates that follow.
 
-Want me to send you those three dates in one note?
-```
-
-### Email 1 — Variant A2 (Offer A + soft timing)
-
-```
-{{first_name}}
-
-Before {{company_name}} pulls the next permit in {{city}}, three items on the public file usually need to line up: license, bond, and coverage on file.
-
-Most shops only watch the letter.
-
-Want me to send those three dates for {{company_name}}?
-```
-
-### Email 1 — Variant E1 (Offer E + office vs field)
-
-```
-{{first_name}}
-
-When {{principal_first}} is on a job, the mail still lands and the office still has to keep permits moving for {{company_name}}.
-
-A lot of that sits outside the renewal letter.
-
-Want me to send the three public dates your office would want in one place?
-```
-
-### Email 1 — Variant B1 (Offer B — Owner / ICP 2)
-
-```
-{{first_name}}
-
-For a {{trade_plain}} shop like {{company_name}} in {{city}}, staying clear to work usually hangs on more than the renewal letter.
-
-License, bond, and coverage on file are the three that show up on the public record.
-
-Want me to send those three dates in one note?
-```
-
-### Email 1 — Variant C1 (Offer C — if A dies to “CSLB already mails us”)
-
-```
-{{first_name}}
-
-The CSLB letter is useful. It is also incomplete for most {{trade_plain}} offices in {{city}}.
-
-Two other dates on the public file sit outside that letter and still matter for permits.
-
-Want me to send all three side by side for {{company_name}}?
+Want the 12-month calendar for {{company_name}}?
 ```
 
 ---
 
-### Email 2 — Magnet (after yes, Method 1)
+### Email 1 — A2: countdown + permits outcome
 
-**No call ask in this email.**
+**Filled:**
+
+```
+Maria
+
+Harbor Peak Electric's next bond date on the public file is about 67 days out.
+
+Before the next permit pull in San Jose, it helps to see the full year of license, bond, and coverage-on-file dates in one place, not only the letter.
+
+Want me to build that 12-month calendar for Harbor Peak Electric?
+```
+
+**PlusVibe:**
 
 ```
 {{first_name}}
 
-Here are the three public dates for {{company_name}}:
+{{company_name}}'s next {{next_item}} date on the public file is about {{days_left}} days out.
+
+Before the next permit pull in {{city}}, it helps to see the full year of license, bond, and coverage-on-file dates in one place, not only the letter.
+
+Want me to build that 12-month calendar for {{company_name}}?
+```
+
+---
+
+### Email 1 — B1: pay / collect (Owner)
+
+**Filled:**
+
+```
+James
+
+Public file shows Harbor Peak Electric's next bond date about 67 days out.
+
+A date like that can sit outside the renewal letter and still affect whether finished work stays clear to collect on.
+
+Want the 12-month calendar for Harbor Peak Electric so those dates sit in front of the office?
+```
+
+**PlusVibe:**
+
+```
+{{first_name}}
+
+Public file shows {{company_name}}'s next {{next_item}} date about {{days_left}} days out.
+
+A date like that can sit outside the renewal letter and still affect whether finished work stays clear to collect on.
+
+Want the 12-month calendar for {{company_name}} so those dates sit in front of the office?
+```
+
+---
+
+### Email 1 — C1: bids / tenders
+
+**Filled:**
+
+```
+James
+
+Harbor Peak Electric's next bond date is about 67 days out on the public file.
+
+When the next bid or job packet shows up, shops usually want license, bond, and coverage on file already mapped for the year, not chased the week of.
+
+Want the 12-month calendar for Harbor Peak Electric?
+```
+
+**PlusVibe:**
+
+```
+{{first_name}}
+
+{{company_name}}'s next {{next_item}} date is about {{days_left}} days out on the public file.
+
+When the next bid or job packet shows up, shops usually want license, bond, and coverage on file already mapped for the year, not chased the week of.
+
+Want the 12-month calendar for {{company_name}}?
+```
+
+---
+
+### Email 1 — E1: office vs field
+
+**Filled:**
+
+```
+Maria
+
+When the qualifier is on a job, Harbor Peak Electric's office still has to watch dates. Next bond date on the public file is about 67 days out.
+
+Want a 12-month calendar the office can hold, with reminders before each date?
+```
+
+**PlusVibe:**
+
+```
+{{first_name}}
+
+When the qualifier is on a job, {{company_name}}'s office still has to watch dates. Next {{next_item}} date on the public file is about {{days_left}} days out.
+
+Want a 12-month calendar the office can hold, with reminders before each date?
+```
+
+---
+
+### Email 2 — proof slice (after yes)
+
+**Filled:**
+
+```
+Maria
+
+Starting the 12-month calendar for Harbor Peak Electric. Here is the front of that map from the public file:
+
+License: 03/14/2027
+Bond: 01/06/2027
+Coverage on file: 08/22/2026
+
+The rest of the year (and how reminders would hit 60, 30, and 7 days out) is clearer on a short call.
+```
+
+**PlusVibe:**
+
+```
+{{first_name}}
+
+Starting the 12-month calendar for {{company_name}}. Here is the front of that map from the public file:
 
 License: {{license_exp}}
 Bond: {{bond_exp}}
 Coverage on file: {{coverage_exp}}
 
-These are the ones that sit next to the renewal letter on the public file. Happy to walk what each one is for when useful.
+The rest of the year (and how reminders would hit 60, 30, and 7 days out) is clearer on a short call.
 ```
-
-Optional surety line if clean: `Bond ({{surety_short}}): {{bond_exp}}`
 
 ---
 
-### Email 3 — Phone bridge (~1 day after magnet)
+### Email 3 — call for the rest + reminders
+
+**Filled:**
+
+```
+Maria
+
+Those three dates are only the front of Harbor Peak Electric's year.
+
+On a short phone walkthrough (about 10 to 12 min) I can show the rest of the map and how texts and emails would land before each date so the office sees them in time for permits and pay.
+
+Can I try you at (408) 555-0142, or is there a better number?
+```
+
+**PlusVibe:**
 
 ```
 {{first_name}}
 
-The renewal letter does not spell out who owns each of those three for {{company_name}}.
+Those three dates are only the front of {{company_name}}'s year.
 
-Easiest path is a short phone walkthrough (about 10 to 12 min) of the dates I sent.
+On a short phone walkthrough (about 10 to 12 min) I can show the rest of the map and how texts and emails would land before each date so the office sees them in time for permits and pay.
 
 Can I try you at {{phone}}, or is there a better number?
 ```
 
 ---
 
-### Method 2 note (if pre-built links exist)
-
-After yes: send unique URL with the three dates + “confirm a number so we can call.”  
-Book action = **phone**, not Zoom/Teams.  
-If links cannot be built in bulk → Method 1 only.
-
----
-
-## 8) Objection one-liners (spam-safe, from onboarding)
+## 8) Objection one-liners
 
 | They say | We say |
 |----------|--------|
-| “We already have someone for this.” | Good. What’s due in the next 90 days, and which of those will arrive by mail? Happy to show how the public-file dates sit next to that. |
-| “We tried this before.” | What broke? Codicen builds the calendar from the CSLB record and a maintained list of state, federal, city, and carrier dates. Every date links to its source so you can check it. |
-| “Just email me the details.” | Happy to. Most offices find more value walking the dates in one place on a short call. Worth 15 minutes? |
-| “Not right now.” | Understood. Your next CSLB, bond, or coverage renewal is the right time. Can we check back 60 days before it? |
-| “Why you vs in-house / competitor?” | Codicen runs on a maintained obligations library for California contractors, tailored to license, entity, and cities. The calendar and texts go out 60, 30, and 7 days ahead. Your team stays on the jobs. |
+| “We already have those dates.” | Good. Most shops do for one or two items. The calendar is the full year plus reminders before each date, not a copy of the letter. |
+| “We already have someone for this.” | What’s due in the next 90 days, and which of those arrive by mail? Happy to show how the year map sits next to that. |
+| “Just email me the details.” | Happy to. The year map is easier to see live. Worth 15 minutes? |
+| “Not right now.” | Understood. With about {{days_left}} days to the next {{next_item}} date, can we check back before that window gets tight? |
 | Price by email | We tailor every calendar to the business, so pricing depends on how complex yours is: how many licenses, entities, cities and crews you have. |
-| Samples / references | Point to codicen.com, or nudge a short demo call. **No client names or results yet.** |
+
+Do **not** say they will “never miss” a deadline, payment, or bid (Codicen never-say + spam). Say the office **sees dates before they land**.
 
 ---
 
@@ -459,122 +483,59 @@ If links cannot be built in bulk → Method 1 only.
 
 | Item | Value |
 |------|--------|
-| First live touch (Wave 1) | **Phone** 10–12 min on their dates |
-| Demo (after phone) | **Microsoft Teams**, 30 min |
+| First live touch | **Phone** 10–12 min (rest of map + reminders) |
+| Demo after phone | **Microsoft Teams**, 30 min |
 | Hours | 8:00 AM – 5:00 PM PDT |
-| CC / contacts | Haroon — haroon.elgabalawy@codicen.com — 626-634-9044 |
+| CC | Haroon — haroon.elgabalawy@codicen.com — 626-634-9044 |
 | | Idris — idris.elgabalawy@codicen.com — 626-390-1958 |
-| Calendar link | TBD (onboarding: will complete later) |
-| Technical questions | Haroon / Idris (they Slack if they spoke to a lead) |
 
-### How it works (shareable, 5 steps)
+### Never say
 
-1. Intro call (30 min Teams after phone): demo + understand situation  
-2. Pricing review (on call only)  
-3. After agreement: build 12-month deadline calendar from license #, trade certs, city licenses, etc.  
-4. Second call: walk every deadline, who wants it, what a miss costs  
-5. Text + email 60 / 30 / 7 days before each deadline  
-
-First call prep: nothing heavy; we use the public license number. Do not invent go-live dates for reminders.
+- Prices / client names / results  
+- Guarantee they will never miss a deadline, penalty, license, payment, or bid  
+- That we file, renew, or pay anything  
+- Legal / tax / insurance advice; CSLB affiliation  
+- That **their** license/bond/coverage is lapsed, at risk, or under audit  
+- Uncited law changes; reminder go-live dates  
+- Email 1 call ask or full date dump  
 
 ---
 
-## 10) Never say / never imply
+## 10) Wave plan
 
-From Codicen onboarding + Wave 1 offer doc:
+### Wave 1
 
-- Prices or dollar figures of any kind  
-- Client names, testimonials, or results (none yet)  
-- That we guarantee they will never miss a deadline, pay a penalty, or lose a license  
-- That we file, renew, or pay anything for them (we **track and remind**)  
-- Legal, tax, or insurance advice; that we are lawyers, CPAs, or brokers  
-- Affiliation with or endorsement by CSLB or any government agency  
-- That **their** license, bond, or coverage is lapsed, at risk, or under audit  
-- Any go-live date for reminders  
-- That a law changed or a deadline moved unless we cite the source  
-- Hyper-signal openers (“coming due,” fake urgency)  
-- Cold copy dump of Codicen / platform / “compliance software” / demo ask in Email 1  
+- List: CA, ICP 1, 10–50, mixed trades, **days_left ≤ 120** on soonest public date  
+- Offer: **12-month calendar** (promise) → 3-date proof → phone for rest + reminders  
+- Angle: countdown + permits (A1)  
+- Metric: completed phone calls  
 
----
+### Wave 2
 
-## 11) PlusVibe variable map (CSLB → sequence)
+- Same conversion; swap B (collect) / C (bids) / E (office)  
 
-| PlusVibe var | Source (CSLB / enrich) | Notes |
-|--------------|------------------------|-------|
-| `first_name` | Decision-maker first name | Required |
-| `company_name` | Business name | Required |
-| `city` | City / mailing city | Required |
-| `trade_plain` | Mapped from primary classification | See trade map |
-| `principal_first` | Qualifier / personnel first name | Offer E |
-| `business_type` | Sole / Corp / LLC | Optional |
-| `phone` | Public / enrich phone | Email 3 |
-| `license_exp` | Master license expiration | Email 2 only |
-| `bond_exp` | Bond expiration | Email 2 only |
-| `coverage_exp` | Workers’ comp / coverage on file date | Email 2 only; **label as coverage on file** |
-| `surety_short` | Bond company short name | Optional Email 2 |
-| `cslb_number` | License number | **Ops only** — never in Email 1 body |
-| `email` | DM email | Send suppress vs PlusVibe / prior clients |
+### List ops
 
-**Liquid example (magnet with optional surety):**
-
-```liquid
-{% if surety_short != blank %}
-Bond ({{surety_short}}): {{bond_exp}}
-{% else %}
-Bond: {{bond_exp}}
-{% endif %}
-```
-
-**Spintax reminder:** only one `{{variable}}` inside a single `{{random|...}}` section.
-
-Preview + test email before live send.
+- Compute `next_item` / `days_left` from CSLB before upload  
+- Suppress days_left ≤ 0 from this “about X days out” sequence  
+- PlusVibe send-suppress + client suppress  
 
 ---
 
-## 12) Wave plan (how to run it)
+## 11) Checklist before send
 
-### Wave 1 — conversion test
-
-- List: CA, ICP 1, 10–50, mixed trades, Office Manager then RMO  
-- Offer: **A** (three public dates → permits)  
-- 50% Method 1 / 50% Method 2 (Method 2 only if links exist)  
-- First live touch: **phone** after number confirm  
-- Metric: **completed phone calls**, not raw yeses  
-- First read: ~300+ delivered per side  
-
-### Wave 2 — offer frames
-
-Same winning conversion path. Swap want: B / C / E.  
-Do not run D unless they named cities and Codicen can produce those dates.
-
-### Wave 3 — targeting splits
-
-Winning offer + conversion, split by size or trade.  
-Trade lines stay on license / bond / coverage. No EPA/DIR in cold line unless deliverable.
-
-### Wave 4 — only if client insists
-
-200–300 one-person shops on Offer B. Kill if replies do not become phone calls.
+- [ ] Lead has `days_left` 1–120 and `next_item` set  
+- [ ] Email 1 promises **calendar**, not “three dates you already have”  
+- [ ] Countdown is factual, not scare  
+- [ ] No license #, no “comp,” no call ask in Email 1  
+- [ ] Email 2 = three dates as **front of the map**  
+- [ ] Email 3 = phone for **rest + reminders**  
+- [ ] Spam-guard scan  
+- [ ] Never-say checked  
 
 ---
 
-## 13) Checklist before any send
+## Premise again
 
-- [ ] Target matches ICP band + trade + title  
-- [ ] One offer, one angle, one teaser snippet in Email 1  
-- [ ] No license #, no full dates, no “comp,” no call ask in Email 1  
-- [ ] Email 2 labels: License / Bond / Coverage on file  
-- [ ] Spam-guard scan (subject + body)  
-- [ ] Never-say list checked  
-- [ ] PlusVibe vars previewed on 3 sample leads  
-- [ ] Suppress PlusVibe sends + known clients  
-- [ ] Method 2 disabled unless bulk links ready  
-- [ ] Inbox knows: phone first, then Teams; CC Haroon/Idris  
-
----
-
-## Premise again (for anyone joining mid-project)
-
-**Codicen reminds California contractors before license, bond, coverage, city, and trade dates come due.**  
-**Wave 1 cold email does not sell that product.**  
-**It earns a yes for three public dates, then a short phone call, then a Teams demo.**
+**Old:** “Can I send you dates?” → weak, they already have them.  
+**New:** “Your next public date is ~X days out. Want a 12-month calendar for the shop?” → yes → send three as proof → call to show the rest and the reminder system.
