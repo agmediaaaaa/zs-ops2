@@ -273,3 +273,66 @@ Target: pilot first (~10–25 ready), then discuss full volume
 Path: Icypeas people.search → Blitz email.find only
 Do free TAM + quote, then ask me for --confirm-spend. Do not spend yet.
 ```
+
+---
+
+## Special Case: Codicen CSLB (California Contractor License Board)
+
+**Script:** `scripts/enrich_cslb_leadsforge.py`
+
+**Flow (Oct 30, 2026 Jessica-required architecture):**
+1. CSLB company name → Hunter domain-finder (free) + optional `--with-paid-domain` Blitz company enrich (off by default)
+2. LeadsForge people search with batched domains (IMPORTANT: LeadsForge charges $0.005/call, so batch ~100 domains per call to minimize cost)
+3. Icypeas exact-person match: batched ~25 people per query by first name, last name, currentCompanyWebsite arrays
+4. Supabase 30-day cache check (`pipeline_leads`) before any paid email find
+5. Blitz email find from LinkedIn URL
+6. MillionVerifier + BounceBan (catch-alls)
+7. Bulk upsert to `pipeline_leads`, create `lead_lists` entry, merge into `codicen_campaign_leads`
+
+**Window definition:**
+- The "Codicen window" = ~23.9k CSLB companies (out of ~245.9k total) with:
+  - `primary_status = 'CLEAR'` (active, in good standing)
+  - License expiration within next 0–120 days
+- Breakdown: 12.2k Sole Owner, 10.4k Corporation, 1.3k LLC/other
+- Top classes: B (general building), C-10 electrical, C-33 painting, C-36 plumbing
+
+**Cost control (mandatory, no default unlimited):**
+- `--cap-usd USD` — hard spend cap, checked before every paid call; run aborts cleanly before exceeding
+- `--target-ready N` — stops once N ready leads are reached
+- `--estimate` — free Hunter sample + small LeadsForge sizing (<$0.25 total), extrapolates full costs and prints recommended caps
+- `--pilot` — small run (~100 ready, requires cap)
+
+**Suppression (always-on):**
+- LinkedIn + email + domain from `codicen_campaign_leads` and `pipeline_leads` (client='Codicen')
+- LeadsForge query includes `excludeEmails`, `excludeLinkedInURLs`, `excludeDomains` from suppression sets
+- Never put the same domain in both include and exclude
+- Run aborts if suppression sets are empty
+
+**Examples:**
+```bash
+# Estimate mode (free Hunter on all 23.9k + small LF sample <$0.25)
+python3 scripts/enrich_cslb_leadsforge.py --estimate
+
+# Pilot run (~100 ready leads)
+python3 scripts/enrich_cslb_leadsforge.py --pilot --cap-usd 5.00
+
+# Full run targeting 1000 ready leads
+python3 scripts/enrich_cslb_leadsforge.py --target-ready 1000 --cap-usd 50.00
+
+# With optional paid domain enrichment (off by default)
+python3 scripts/enrich_cslb_leadsforge.py --target-ready 500 --cap-usd 30.00 --with-paid-domain
+```
+
+**Key differences from standard Cheap Scrape:**
+- Starts with CSLB companies from Supabase (no TAM discovery)
+- Uses LeadsForge for initial people sourcing (batched domains to minimize $0.005/call cost)
+- Icypeas for exact-person match + enrichment (LinkedIn, title, company description)
+- Always-on Supabase cache reuse (30-day window)
+- Domains written back to `cslb_companies` table
+- Final merge into `codicen_campaign_leads` (preserves Lead Database, campaign-specific staging)
+
+**Hard stops:**
+- No run without `--cap-usd` (no default unlimited mode)
+- Estimate must stay under $0.25 for LeadsForge sizing
+- Never approve pilot/full without estimate output first
+- Domain resolution approach must not change to make estimate cheaper (Hunter on all or representative sample is fine; extrapolate and note it)
