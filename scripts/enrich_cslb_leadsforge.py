@@ -2,30 +2,40 @@
 """Enrich CSLB companies with LeadsForge → Icypeas → Blitz (Jessica's required flow).
 
 Flow (Nov 1, 2026 pipeline architecture):
-  1. CSLB company name → Hunter domain-finder (free) + optional paid Blitz company enrich
+  1. CSLB company name → Clearbit domain autocomplete (free, primary)
+     - Strict matching: scores candidates against cleaned license name
+     - Rejects non-US TLDs (.com.au, .co.uk, etc.)
+     - Optional Hunter fallback (--with-hunter-fallback)
+     - Optional paid Blitz (--with-paid-domain)
   2. LeadsForge people search (batched domains, suppression always-on, no per-company limits)
   3. Icypeas exact-person match (batched ~25 people per query by name+domain)
   4. Supabase ALL-client cache check (email/LinkedIn/name+domain) before paid email find
   5. Blitz email find from LinkedIn URL
   6. MillionVerifier + BounceBan (catch-alls)
-  7. Upsert to pipeline_leads, create lead_list, merge to codicen_campaign_leads
+  7. Upsert to Lead Database, pipeline_leads (with lead_database_id), create lead_list + members, merge to codicen_campaign_leads
 
 Cost control (mandatory):
   --cap-usd USD                Hard spend cap (required, no default unlimited mode)
   --target-ready N             Stop once N ready leads are reached
-  --estimate                   Free Hunter sample + small LF sizing (<$0.25), extrapolate costs
+  --estimate                   Free Clearbit sample + small LF sizing (<$0.25), extrapolate costs
+  --resolve-only               Domain resolution quality check (free, seeded sample)
   --pilot                      Small target + cap for testing (100 ready)
   --window-days N              Window size in days (default: 90)
+  --with-hunter-fallback       Enable Hunter as fallback after Clearbit (off by default)
+  --with-paid-domain           Enable paid Blitz domain enrich (off by default)
   --allow-empty-suppression    Allow empty suppression sets (not recommended)
 
 Window definition:
   The "Codicen window" = CSLB companies with:
     - primary_status = 'CLEAR'
     - expiration_date_iso BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL 'N days'
-  Default: 90 days (~22k companies)
+  Default: 90 days (actual: 13,321 companies as of Nov 1, 2026)
 
 Examples:
-  # Estimate on current window (free Hunter + small LF sample, <$0.25 total)
+  # Resolve-only mode (check domain resolution quality, free)
+  python3 scripts/enrich_cslb_leadsforge.py --resolve-only
+
+  # Estimate on current window (free Clearbit + small LF sample, <$0.25 total)
   python3 scripts/enrich_cslb_leadsforge.py --estimate
 
   # Pilot run (100 ready leads, $1 cap, 90-day window)
@@ -34,8 +44,8 @@ Examples:
   # Full run with 1000 ready target
   python3 scripts/enrich_cslb_leadsforge.py --target-ready 1000 --cap-usd 50.00
 
-  # With optional paid domain enrichment (off by default)
-  python3 scripts/enrich_cslb_leadsforge.py --target-ready 500 --cap-usd 30.00 --with-paid-domain
+  # With Hunter fallback and paid domain enrichment
+  python3 scripts/enrich_cslb_leadsforge.py --target-ready 500 --cap-usd 30.00 --with-hunter-fallback --with-paid-domain
 """
 from __future__ import annotations
 
@@ -625,15 +635,22 @@ def resolve_domains_batch(
     companies: list[CSLBCompany],
     treg: TregClient,
     cost_tracker: CostTracker,
+    with_hunter_fallback: bool = False,
     with_paid: bool = False,
 ) -> list[CSLBCompany]:
-    """Resolve company domains with Hunter (free) + optional paid Blitz."""
-    print(f"\n=== Stage 1: Domain Resolution (Hunter free{' + Blitz paid' if with_paid else ''}) ===")
+    """Resolve company domains (Clearbit primary, optional Hunter fallback + paid Blitz)."""
+    fallback_str = ""
+    if with_hunter_fallback:
+        fallback_str = " + Hunter fallback"
+    if with_paid:
+        fallback_str += " + Blitz paid"
+    
+    print(f"\n=== Stage 1: Domain Resolution (Clearbit free{fallback_str}) ===")
     
     updated = []
     stats = Counter()
     
-    with ThreadPoolExecutor(max_workers=HUNTER_WORKERS, thread_name_prefix="Hunter") as pool:
+    with ThreadPoolExecutor(max_workers=HUNTER_WORKERS, thread_name_prefix="Resolve") as pool:
         futures = {}
         for company in companies:
             if company.company_domain or company.website:
@@ -646,7 +663,7 @@ def resolve_domains_batch(
                 updated.append(company)
                 continue
             
-            future = pool.submit(_resolve_one_domain, company, treg, cost_tracker, with_paid)
+            future = pool.submit(_resolve_one_domain, company, treg, cost_tracker, with_hunter_fallback, with_paid)
             futures[future] = company
         
         for future in as_completed(futures):
@@ -672,38 +689,34 @@ def _resolve_one_domain(
     company: CSLBCompany,
     treg: TregClient,
     cost_tracker: CostTracker,
-    with_paid: bool,
+    with_hunter_fallback: bool = False,
+    with_paid: bool = False,
 ) -> CSLBCompany:
-    """Resolve one company domain (Hunter free, then optional Blitz paid)."""
+    """Resolve one company domain (Clearbit primary, optional Hunter fallback)."""
     name = company.display_name()
     
-    # Hunter domain-finder (free)
-    try:
-        out, cost = treg.call("hunter.x.domain-finder", {"company": name})
-        cost_tracker.settle(0, cost, "hunter_domain")
-        
-        domain = ""
-        if isinstance(out, dict):
-            domain = (
-                out.get("domain")
-                or (out.get("data") or {}).get("domain")
-                or (out.get("output") or {}).get("domain")
-                or ""
-            )
-            if not domain and isinstance(out.get("domains"), list) and out["domains"]:
-                d0 = out["domains"][0]
-                domain = d0 if isinstance(d0, str) else (d0.get("domain") or "")
-        
-        domain = norm_domain(domain)
-        if domain and _domain_plausible(domain, name):
+    # 1. Clearbit autocomplete (free, no key, primary)
+    domain = _clearbit_domain_finder(name)
+    if domain:
+        cost_tracker.incr_counter("clearbit_hit")
+        company.company_domain = domain
+        company.website = f"https://{domain}"
+        return company
+    
+    cost_tracker.incr_counter("clearbit_miss")
+    
+    # 2. Hunter fallback (optional, free)
+    if with_hunter_fallback:
+        domain = _hunter_domain_finder(name, treg, cost_tracker)
+        if domain:
+            cost_tracker.incr_counter("hunter_hit")
             company.company_domain = domain
             company.website = f"https://{domain}"
             return company
+        
+        cost_tracker.incr_counter("hunter_miss")
     
-    except Exception as e:
-        print(f"  Hunter error for {name[:40]}: {e}")
-    
-    # Optional paid Blitz company enrich
+    # 3. Optional paid Blitz company enrich
     if with_paid:
         try:
             cost_tracker.reserve(COST_BLITZ_COMPANY, "blitz_company")
@@ -718,28 +731,204 @@ def _resolve_one_domain(
                     or ""
                 )
                 domain = norm_domain(website)
-                if domain and _domain_plausible(domain, name):
+                
+                # Apply same strict check
+                if domain and _is_us_domain(domain) and _score_domain_match(domain, name) >= 0.7:
                     company.company_domain = domain
                     company.website = f"https://{domain}"
+                    cost_tracker.incr_counter("blitz_hit")
+                    return company
         
         except Exception as e:
             cost_tracker.settle(COST_BLITZ_COMPANY, 0, "blitz_company")
-            # Not an error - just skip paid enrichment
     
     return company
 
 
-def _domain_plausible(domain: str, company_name: str) -> bool:
-    """Check if domain is plausible for company name."""
-    if not domain or not company_name:
+def _clean_company_name(name: str) -> str:
+    """Clean company name by removing legal suffixes and common noise."""
+    if not name:
+        return ""
+    
+    # Remove common legal suffixes (case-insensitive)
+    suffixes = [
+        r'\bINC\.?$', r'\bLLC\.?$', r'\bCORP\.?$', r'\bLTD\.?$',
+        r'\bCONST\.?$', r'\bCONSTRUCTION$', r'\bCONTRACTORS?$',
+        r'\bENTERPRISES?$', r'\bCOMPANY$', r'\bCO\.?$',
+        r'\bGROUP$', r'\bSERVICES?$', r'\bSOLUTIONS?$',
+    ]
+    
+    cleaned = name.upper()
+    for suffix in suffixes:
+        cleaned = re.sub(suffix, '', cleaned, flags=re.IGNORECASE)
+    
+    return cleaned.strip()
+
+
+def _is_us_domain(domain: str) -> bool:
+    """Check if domain is US-based (reject .com.au, .co.uk, etc.)."""
+    if not domain:
         return False
     
-    # Remove common TLDs and check if domain relates to name
-    domain_base = domain.split(".")[0]
-    name_tokens = set(re.findall(r"\w+", company_name.lower()))
+    # Reject non-US country TLDs
+    non_us_tlds = [
+        '.com.au', '.co.uk', '.com.mx', '.ca', '.com.br',
+        '.de', '.fr', '.es', '.it', '.nl', '.jp', '.cn',
+        '.in', '.com.sg', '.com.hk', '.co.nz', '.ie',
+    ]
     
-    # Domain should share at least one token with company name
-    return any(token in domain_base for token in name_tokens if len(token) > 3)
+    domain_lower = domain.lower()
+    return not any(domain_lower.endswith(tld) for tld in non_us_tlds)
+
+
+def _score_domain_match(domain: str, company_name: str, candidate_name: str = "") -> float:
+    """Score how well a domain matches a company name (0.0 to 1.0).
+    
+    Requires strong normalized match between candidate and license name.
+    """
+    if not domain or not company_name:
+        return 0.0
+    
+    # Clean both names
+    cleaned_company = _clean_company_name(company_name)
+    cleaned_candidate = _clean_company_name(candidate_name) if candidate_name else ""
+    
+    # Extract domain base (before first dot)
+    domain_base = domain.split(".")[0].lower()
+    
+    # Normalize: remove spaces, dashes, underscores
+    company_norm = re.sub(r'[^\w]', '', cleaned_company).lower()
+    candidate_norm = re.sub(r'[^\w]', '', cleaned_candidate).lower() if cleaned_candidate else ""
+    domain_norm = re.sub(r'[^\w]', '', domain_base).lower()
+    
+    # Exact match
+    if domain_norm == company_norm or (candidate_norm and domain_norm == candidate_norm):
+        return 1.0
+    
+    # Strong substring match (domain in company or company in domain)
+    if len(domain_norm) >= 5:
+        if domain_norm in company_norm or company_norm in domain_norm:
+            return 0.9
+        if candidate_norm and (domain_norm in candidate_norm or candidate_norm in domain_norm):
+            return 0.85
+    
+    # Token overlap (count of matching significant words)
+    company_tokens = set(t for t in re.findall(r'\w+', company_norm) if len(t) > 3)
+    domain_tokens = set(t for t in re.findall(r'\w+', domain_norm) if len(t) > 3)
+    
+    if not company_tokens:
+        return 0.0
+    
+    overlap = len(company_tokens & domain_tokens)
+    if overlap > 0:
+        return min(0.7, 0.4 + (overlap * 0.15))
+    
+    return 0.0
+
+
+def _clearbit_domain_finder(company_name: str) -> str | None:
+    """Find domain using Clearbit autocomplete (free, no key required).
+    
+    Returns best matching domain or None if no strong match.
+    """
+    if not company_name:
+        return None
+    
+    try:
+        query = urllib.parse.quote(company_name)
+        url = f"https://autocomplete.clearbit.com/v1/companies/suggest?query={query}"
+        
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            results = json.loads(resp.read().decode())
+        
+        if not isinstance(results, list) or not results:
+            return None
+        
+        # Score all candidates
+        best_domain = None
+        best_score = 0.0
+        
+        for candidate in results[:5]:  # Check top 5
+            domain = candidate.get("domain", "")
+            name = candidate.get("name", "")
+            
+            if not domain:
+                continue
+            
+            # Reject non-US domains
+            if not _is_us_domain(domain):
+                continue
+            
+            score = _score_domain_match(domain, company_name, name)
+            
+            if score > best_score:
+                best_score = score
+                best_domain = domain
+        
+        # Require strong match (0.7+ score)
+        if best_score >= 0.7:
+            return best_domain
+        
+        return None
+        
+    except Exception as e:
+        # Clearbit errors are silent (not critical)
+        return None
+
+
+def _hunter_domain_finder(company_name: str, treg: TregClient, cost_tracker: CostTracker) -> str | None:
+    """Find domain using Hunter (free, optional fallback).
+    
+    Returns best matching domain or None if no strong match.
+    """
+    if not company_name:
+        return None
+    
+    try:
+        out, cost = treg.call("hunter.x.domain-finder", query={"company": urllib.parse.quote(company_name)})
+        cost_tracker.settle(0, cost, "hunter_domain")
+        
+        # Parse candidates
+        candidates = []
+        if isinstance(out, dict):
+            if isinstance(out.get("data"), list):
+                candidates = out["data"]
+            elif out.get("domain"):
+                candidates = [{"domain": out["domain"]}]
+            elif out.get("domains"):
+                candidates = out["domains"]
+        
+        if not candidates:
+            return None
+        
+        # Score all candidates
+        best_domain = None
+        best_score = 0.0
+        
+        for candidate in candidates:
+            domain = candidate.get("domain", "")
+            if not domain:
+                continue
+            
+            # Reject non-US domains
+            if not _is_us_domain(domain):
+                continue
+            
+            score = _score_domain_match(domain, company_name)
+            
+            if score > best_score:
+                best_score = score
+                best_domain = domain
+        
+        # Require strong match (0.7+ score)
+        if best_score >= 0.7:
+            return best_domain
+        
+        return None
+        
+    except Exception:
+        return None
 
 
 def leadsforge_search(
@@ -1250,7 +1439,7 @@ def upsert_to_supabase(
     batch_id: str,
 ) -> dict:
     """
-    Stage 7: Upsert to pipeline_leads, create lead_list, merge to codicen_campaign_leads.
+    Stage 7: Upsert to Lead Database, pipeline_leads, create lead_list + members, merge to codicen_campaign_leads.
     """
     print(f"\n=== Stage 7: Supabase Upload ===")
     
@@ -1262,15 +1451,45 @@ def upsert_to_supabase(
     
     print(f"  Uploading {len(ready)} ready leads...")
     
-    # Prepare pipeline_leads rows
     now_iso = datetime.now(timezone.utc).isoformat()
+    
+    # Step 1: Insert/update Lead Database rows (core lead identity table)
+    print("  Creating Lead Database entries...")
+    lead_db_rows = []
+    email_to_person = {}
+    
+    for p in ready:
+        lead_db_rows.append({
+            "email": p.email,
+            "first_name": p.first_name,
+            "last_name": p.last_name,
+            "linkedin_url": p.linkedin_url,
+            "company_domain": p.company_domain,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        })
+        email_to_person[p.email] = p
+    
+    # Upsert to Lead Database (on conflict: email)
+    lead_db_result = sb.upsert("Lead Database", lead_db_rows, on_conflict="email")
+    
+    # Build email -> lead_database_id mapping
+    email_to_lead_id = {}
+    if lead_db_result:
+        for row in lead_db_result:
+            email_to_lead_id[row["email"]] = row["id"]
+    
+    # Step 2: Upsert to pipeline_leads with lead_database_id
+    print("  Upserting to pipeline_leads...")
     pipeline_rows = []
     
     for p in ready:
+        lead_db_id = email_to_lead_id.get(p.email)
         row = {
             "client": "Codicen",
             "campaign_id": "cslb_leadsforge",
             "batch_id": batch_id,
+            "lead_database_id": lead_db_id,
             "first_name": p.first_name,
             "last_name": p.last_name,
             "email": p.email,
@@ -1283,17 +1502,17 @@ def upsert_to_supabase(
             "company_size": p.company_size,
             "location": p.location or p.lf_location,
             "email_source": p.email_source,
-            "mv_result": p.mv_result,
+            "mv_status": p.mv_result,
             "created_at": now_iso,
             "updated_at": now_iso,
         }
         pipeline_rows.append(row)
     
     # Upsert to pipeline_leads (on conflict: email)
-    print("  Upserting to pipeline_leads...")
     sb.upsert("pipeline_leads", pipeline_rows, on_conflict="email")
     
-    # Create lead_list entry
+    # Step 3: Create lead_list entry
+    print("  Creating lead list...")
     list_row = {
         "client": "Codicen",
         "campaign_id": "cslb_leadsforge",
@@ -1307,12 +1526,36 @@ def upsert_to_supabase(
     list_result = sb.insert("lead_lists", [list_row])
     list_id = list_result[0]["id"] if list_result else None
     
-    # Create lead_list_members (many-to-many join)
-    if list_id:
-        # TODO: Link pipeline_leads.id to lead_list_members
-        pass
+    # Step 4: Create lead_list_members (many-to-many join with Lead Database)
+    if list_id and email_to_lead_id:
+        print("  Creating lead list members...")
+        member_rows = []
+        
+        for p in ready:
+            lead_db_id = email_to_lead_id.get(p.email)
+            if not lead_db_id:
+                continue
+            
+            # enrichment_status: pending, in_progress, enriched, failed, skipped
+            # Use "enriched" for ready leads, "failed" for non-ready
+            status = "enriched" if p.ready else "failed"
+            
+            member_rows.append({
+                "list_id": list_id,
+                "lead_id": lead_db_id,
+                "enrichment_status": status,
+                "created_at": now_iso,
+                "updated_at": now_iso,
+            })
+        
+        if member_rows:
+            try:
+                sb.insert("lead_list_members", member_rows)
+                print(f"    Created {len(member_rows)} lead list members")
+            except Exception as e:
+                print(f"    Warning: lead_list_members insert failed: {e}")
     
-    # Merge to codicen_campaign_leads
+    # Step 5: Merge to codicen_campaign_leads
     print("  Merging to codicen_campaign_leads...")
     campaign_rows = []
     
@@ -1441,7 +1684,7 @@ def estimate_mode(sb: SupabaseClient, window_days: int = 90, allow_empty_suppres
     dummy_cost_tracker = CostTracker(999999.0)
     dummy_treg = TregClient(TREG_TOKEN, dummy_cost_tracker)
     
-    resolved = resolve_domains_batch(sample, dummy_treg, dummy_cost_tracker, with_paid=False)
+    resolved = resolve_domains_batch(sample, dummy_treg, dummy_cost_tracker, with_hunter_fallback=False, with_paid=False)
     
     sample_with_domain = sum(1 for c in resolved if c.company_domain)
     domain_rate = sample_with_domain / max(len(sample), 1)
@@ -1603,16 +1846,77 @@ def estimate_mode(sb: SupabaseClient, window_days: int = 90, allow_empty_suppres
     print("Next: python3 scripts/enrich_cslb_leadsforge.py --pilot --cap-usd 1.00 --window-days 90")
 
 
+def resolve_only_mode(sb: SupabaseClient, window_days: int = 90, with_hunter_fallback: bool = False) -> None:
+    """
+    Resolve-only mode: Test domain resolution quality on a seeded sample (free).
+    Prints resolve rate and sample name-to-domain pairs for quality checking.
+    """
+    print("="*80)
+    print("RESOLVE-ONLY MODE (Domain Resolution Quality Check)")
+    print("="*80)
+    
+    # Load full window
+    companies = load_codicen_window(sb, window_days)
+    total_companies = len(companies)
+    
+    if not companies:
+        print("ERROR: No companies in window")
+        return
+    
+    print(f"\nWindow: {total_companies:,} companies (CLEAR, exp 0-{window_days} days)")
+    
+    # Use a seeded random sample
+    import random
+    sample_size = min(int(os.environ.get("ESTIMATE_SAMPLE", "500")), total_companies)
+    sample = random.Random(42).sample(companies, sample_size)
+    
+    print(f"Resolving domains for {len(sample):,} sample companies...")
+    print()
+    
+    dummy_cost_tracker = CostTracker(0.0)  # No spend cap needed
+    dummy_treg = TregClient(TREG_TOKEN, dummy_cost_tracker)
+    
+    resolved = resolve_domains_batch(sample, dummy_treg, dummy_cost_tracker, with_hunter_fallback=with_hunter_fallback, with_paid=False)
+    
+    sample_with_domain = sum(1 for c in resolved if c.company_domain)
+    domain_rate = sample_with_domain / max(len(sample), 1)
+    
+    print(f"\n{'='*80}")
+    print("RESULTS")
+    print("="*80)
+    print(f"\nSample: {sample_with_domain}/{len(sample)} = {domain_rate:.1%} with domain")
+    print(f"Extrapolated: ~{int(total_companies * domain_rate):,} / {total_companies:,} companies with domains")
+    print()
+    
+    # Print sample mappings for quality check
+    print("Sample name-to-domain mappings (first 30):")
+    print("-" * 80)
+    
+    resolved_with_domain = [c for c in resolved if c.company_domain][:30]
+    for company in resolved_with_domain:
+        print(f"  {company.business_name[:50]:50} → {company.company_domain}")
+    
+    if not resolved_with_domain:
+        print("  (No domains resolved in sample)")
+    
+    print()
+    print(f"Cost tracker summary: {dummy_cost_tracker.summary()}")
+    print()
+    print("Next: Review sample mappings for quality, then run --estimate or --pilot")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="CSLB LeadsForge → Icypeas → Blitz enrichment with strict cost control",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--estimate", action="store_true", help="Estimate costs only (free Hunter + small LF sample <$0.25)")
+    ap.add_argument("--estimate", action="store_true", help="Estimate costs only (free Clearbit sample + small LF sizing <$0.25)")
+    ap.add_argument("--resolve-only", action="store_true", help="Domain resolution quality check (free, seeded sample)")
     ap.add_argument("--pilot", action="store_true", help="Pilot run (~100 ready leads)")
     ap.add_argument("--target-ready", type=int, help="Stop once N ready leads are reached")
     ap.add_argument("--cap-usd", type=float, help="Hard spend cap in USD (REQUIRED for paid runs)")
-    ap.add_argument("--with-paid-domain", action="store_true", help="Allow paid Blitz company enrich if Hunter misses (off by default)")
+    ap.add_argument("--with-hunter-fallback", action="store_true", help="Enable Hunter as fallback after Clearbit (off by default)")
+    ap.add_argument("--with-paid-domain", action="store_true", help="Allow paid Blitz company enrich if all free options miss (off by default)")
     ap.add_argument("--window-days", type=int, default=90, help="Window size in days (default: 90)")
     ap.add_argument("--allow-empty-suppression", action="store_true", help="Allow empty suppression sets (not recommended)")
     ap.add_argument("--out-dir", type=Path, default=OUT_DIR, help="Output directory")
@@ -1632,6 +1936,12 @@ def main(argv: list[str] | None = None) -> int:
         # Estimate mode - no cap required
         sb = SupabaseClient(SUPABASE_URL, SUPABASE_KEY)
         estimate_mode(sb, window_days=args.window_days, allow_empty_suppression=args.allow_empty_suppression)
+        return 0
+    
+    if args.resolve_only:
+        # Resolve-only mode - domain resolution quality check (free)
+        sb = SupabaseClient(SUPABASE_URL, SUPABASE_KEY)
+        resolve_only_mode(sb, window_days=args.window_days, with_hunter_fallback=args.with_hunter_fallback)
         return 0
     
     # Paid runs require cap
@@ -1681,7 +1991,7 @@ def main(argv: list[str] | None = None) -> int:
     # Pipeline
     try:
         # Stage 1: Domain resolution
-        companies = resolve_domains_batch(companies, treg, cost_tracker, args.with_paid_domain)
+        companies = resolve_domains_batch(companies, treg, cost_tracker, with_hunter_fallback=args.with_hunter_fallback, with_paid=args.with_paid_domain)
         
         # Stage 2: LeadsForge people search
         people = leadsforge_search(companies, treg, cost_tracker, suppress_domains, suppress_emails, suppress_linkedin)
@@ -1706,11 +2016,11 @@ def main(argv: list[str] | None = None) -> int:
         # Stage 6: Email verification
         people = verify_emails(people, treg, cost_tracker)
         
+        # Write report BEFORE DB operations (so crash doesn't lose it)
+        write_report(args.out_dir, companies, people, cost_tracker, mode)
+        
         # Stage 7: Upload to Supabase
         result = upsert_to_supabase(people, sb, batch_id)
-        
-        # Write report
-        write_report(args.out_dir, companies, people, cost_tracker, mode)
         
         print(f"\n{'='*80}")
         print("✓ DONE")
