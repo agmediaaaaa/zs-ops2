@@ -10,8 +10,11 @@ Env:
 
 Usage:
   python scripts/upload_cslb_companies_supabase.py \\
-    --csv data/cslb/normalized/cslb_licenses_latest.csv \\
-    --slice-name expires120_clear
+    --csv data/cslb/normalized/cslb_licenses_full_latest.csv \\
+    --slice-name full
+
+Query days_to_expiration via view public.cslb_companies_live (formula from
+expiration_date_iso - current_date), not the base table.
 """
 
 from __future__ import annotations
@@ -28,11 +31,19 @@ from pathlib import Path
 DEFAULT_URL = "https://npkdhahdvilcctjwzdlf.supabase.co"
 TABLE = "cslb_companies"
 
-BOOL_COLS = {"expires_within_30", "expires_within_90", "expires_within_120"}
-INT_COLS = {"days_to_expiration", "principal_count"}
+# days_to_expiration / expires_within_* are formulas on view cslb_companies_live
+# (expiration_date_iso - current_date). Do not upsert static snapshots.
+BOOL_COLS: set[str] = set()
+INT_COLS = {"principal_count"}
 DATE_COLS = {"expiration_date_iso"}
 JSON_COLS = {"principals_json"}
 RENAME = {"principals_json": "principals", "email": "dm_email"}
+SKIP_COLS = {
+    "days_to_expiration",
+    "expires_within_30",
+    "expires_within_90",
+    "expires_within_120",
+}
 
 ALLOWED = {
     "license_no",
@@ -52,10 +63,6 @@ ALLOWED = {
     "reissue_date",
     "expiration_date",
     "expiration_date_iso",
-    "days_to_expiration",
-    "expires_within_30",
-    "expires_within_90",
-    "expires_within_120",
     "inactivation_date",
     "reactivation_date",
     "primary_status",
@@ -119,6 +126,8 @@ def parse_json(v):
 def row_to_payload(row: dict, *, slice_name: str) -> dict:
     out: dict = {}
     for k, v in row.items():
+        if k in SKIP_COLS:
+            continue
         dbk = RENAME.get(k, k)
         if k in BOOL_COLS:
             out[dbk] = parse_bool(v)
@@ -165,8 +174,8 @@ def upsert(url: str, key: str, batch: list[dict]) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--csv", type=Path, required=True)
-    p.add_argument("--slice-name", default="expires120_clear")
-    p.add_argument("--batch", type=int, default=400)
+    p.add_argument("--slice-name", default="full")
+    p.add_argument("--batch", type=int, default=500)
     args = p.parse_args()
 
     url = (os.environ.get("SUPABASE_URL") or DEFAULT_URL).strip()

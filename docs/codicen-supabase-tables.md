@@ -29,19 +29,32 @@ Optional: `cslb_companies.dm_*` / `lead_database_id` can mirror the matched pers
 
 ---
 
+## Expiry formulas (not static numbers)
+
+Postgres cannot put `current_date` in a generated column (not immutable).  
+So `days_to_expiration` / `expires_within_*` are **not stored** on `cslb_companies`.
+
+Use the live view instead:
+
+| Object | Role |
+|--------|------|
+| `cslb_companies` | Stored company fields + `expiration_date_iso` |
+| `cslb_companies_live` | Same rows + **formula** `days_to_expiration = expiration_date_iso - current_date`, plus `expires_within_30/90/120` |
+
+Same pattern: `codicen_campaign_leads_live`.
+
 ## What was loaded
 
 Upload script: `scripts/upload_cslb_companies_supabase.py`
 
 ```bash
+# Full statewide file (~245,927 companies)
 python scripts/upload_cslb_companies_supabase.py \
-  --csv data/cslb/normalized/cslb_licenses_latest.csv \
-  --slice-name expires120_clear
+  --csv data/cslb/normalized/cslb_licenses_full_latest.csv \
+  --slice-name full
 ```
 
-Wave 1 slice: CLEAR licenses with expiration within 120 days (~23.9k rows) → `cslb_companies`.
-
-Full statewide (~245k): same script with `cslb_licenses_full_latest.csv` and `--slice-name full`.
+Script does **not** upsert static day counts — only `expiration_date_iso` (and other stored fields).
 
 ---
 
