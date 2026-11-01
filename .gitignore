@@ -6,6 +6,10 @@
 artifacts/
 outputs/
 
+# CSLB bulk downloads + normalized exports (large / PII-ish)
+data/cslb/raw/
+data/cslb/normalized/
+
 # Python
 __pycache__/
 *.py[cod]
