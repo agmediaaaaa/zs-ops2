@@ -66,14 +66,14 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://npkdhahdvilcctjwzdlf.supa
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 PLUSVIBE_API_KEY = os.environ.get("PLUSVIBE_API_KEY", "")
 
-# Catalog costs (micro USD) - verify with `treg catalog get` before large runs
+# Catalog costs (micro USD) - observed rates Nov 1, 2026
 COST_HUNTER_DOMAIN = 0  # Free
-COST_BLITZ_COMPANY = 495  # $0.000495 per success
-COST_LEADSFORGE_CALL = 5000  # $0.005 per call (charged after free allowance)
-COST_ICYPEAS_SEARCH = 380  # $0.00038 per row
-COST_BLITZ_EMAIL = 495  # $0.000495 per success
-COST_MV = 1780  # $0.00178 per success
-COST_BB = 5000  # Up to $0.005
+COST_BLITZ_COMPANY = 495  # $0.000495 per success (assumption)
+COST_LEADSFORGE_CALL = 5000  # $0.005 per call (observed after ~117 free calls)
+COST_ICYPEAS_SEARCH = 380  # $0.00038 per row (observed)
+COST_BLITZ_EMAIL = 500  # ~$0.0005 per hit (observed)
+COST_MV = 1780  # $0.00178 per success (catalog)
+COST_BB = 5000  # Up to $0.005 (catalog)
 
 # Worker pool sizes
 HUNTER_WORKERS = int(os.environ.get("HUNTER_WORKERS", "8"))
@@ -602,13 +602,14 @@ def leadsforge_search(
     treg: TregClient,
     cost_tracker: CostTracker,
     suppress_domains: set[str],
+    suppress_emails: set[str],
+    suppress_linkedin: set[str],
 ) -> list[Person]:
     """
     LeadsForge people search with batched domains.
-    IMPORTANT: LeadsForge charges $0.005 per call, so minimize call count by batching many domains.
+    IMPORTANT: LeadsForge charges $0.005 per call after ~117 free calls, so minimize call count.
     
-    NOTE: LeadsForge endpoint structure TBD - using placeholder "leadsforge.people.search".
-    Update with actual Treg endpoint name and request/response structure when available.
+    Observed: ~117 calls free, then $0.005/call (Nov 1, 2026)
     """
     print(f"\n=== Stage 2: LeadsForge People Search (batched domains) ===")
     
@@ -625,15 +626,17 @@ def leadsforge_search(
     print(f"  {len(valid_companies):,} companies with domains (not suppressed)")
     
     # Batch domains (LeadsForge accepts multiple domains per call)
-    batch_size = 100  # Adjust based on LeadsForge API limits
-    domain_batches = []
+    batch_size = 100  # Balance: API limits vs call minimization
     company_by_domain = {norm_domain(c.company_domain): c for c in valid_companies}
     domains = list(company_by_domain.keys())
     
-    for i in range(0, len(domains), batch_size):
-        domain_batches.append(domains[i:i+batch_size])
+    # Never put a domain in both include and exclude (breaks include filter)
+    exclude_domains_clean = [d for d in suppress_domains if d not in domains]
+    
+    domain_batches = [domains[i:i+batch_size] for i in range(0, len(domains), batch_size)]
     
     print(f"  Batched into {len(domain_batches)} LeadsForge calls ({batch_size} domains/call)")
+    print(f"  Suppression: {len(exclude_domains_clean)} domains, {len(suppress_emails)} emails, {len(suppress_linkedin)} LinkedIn URLs")
     
     all_people = []
     
@@ -643,26 +646,29 @@ def leadsforge_search(
             cost_tracker.reserve(COST_LEADSFORGE_CALL, "leadsforge")
             
             # LeadsForge people search query
-            # TODO: Replace with actual LeadsForge API structure when available
             query = {
                 "companyDomains": {"include": domain_batch},
-                "title": DM_TITLES,
-                "location": {"countries": ["US"]},
-                "maxContactsPerCompany": 3,  # Limit contacts per company
-                # TODO: Add excludeEmails, excludeLinkedInURLs, excludeDomains from suppression
+                "leadJobTitles": {"include": DM_TITLES},
+                "leadLocations": {"include": ["United States"]},
+                "companyLocations": {"include": ["United States"]},
+                "excludeEmails": list(suppress_emails),
+                "excludeDomains": exclude_domains_clean,
+                "excludeLinkedInURLs": list(suppress_linkedin),
+                "maxContactsPerCompany": 3,
+                "limit": 100,
             }
             
             print(f"  LeadsForge call {batch_idx+1}/{len(domain_batches)} ({len(domain_batch)} domains)...")
             
-            # Call LeadsForge (endpoint TBD - using placeholder)
-            out, cost = treg.call("leadsforge.people.search", body=query)
+            # Call LeadsForge
+            out, cost = treg.call("leadsforge.people.search", body=query, timeout=120.0)
             cost_tracker.settle(COST_LEADSFORGE_CALL, cost, "leadsforge")
             
-            # Parse LeadsForge response
+            # Parse response
             people = _parse_leadsforge_response(out, company_by_domain)
             all_people.extend(people)
             
-            print(f"    Found {len(people)} people")
+            print(f"    Found {len(people)} people (cost: ${cost/1e6:.6f})")
             time.sleep(0.5)  # Rate limit
         
         except Exception as e:
@@ -675,17 +681,68 @@ def leadsforge_search(
 
 
 def _parse_leadsforge_response(response: dict, company_by_domain: dict[str, CSLBCompany]) -> list[Person]:
-    """Parse LeadsForge API response into Person objects."""
+    """Parse LeadsForge API response into Person objects.
+    
+    Response structure (observed Nov 1, 2026):
+    {
+        "leads": [
+            {
+                "id": "...",
+                "firstName": "...", "lastName": "...", "jobTitle": "...",
+                "location": {"city": "...", "state": "...", "country": "..."},
+                "company": {
+                    "id": "...", "domain": "...", "website": "...",
+                    "employeeCount": N, "industry": "...", "keywords": [...],
+                    "location": {...}, "revenueRange": {...}, "yearsInBusiness": N
+                }
+            }
+        ],
+        ... paging/meta ...
+    }
+    
+    NOTE: NO LinkedIn URL, NO email in response (that's why Icypeas exact-person comes next).
+    """
     people = []
     
-    # TODO: Update with actual LeadsForge response structure
-    results = response.get("contacts") or response.get("people") or []
+    if not isinstance(response, dict):
+        return people
     
-    for item in results:
-        domain = norm_domain(item.get("companyDomain") or item.get("company_website") or "")
+    leads = response.get("leads", [])
+    
+    for item in leads:
+        if not isinstance(item, dict):
+            continue
+        
+        # Extract company domain
+        company_info = item.get("company", {})
+        if not isinstance(company_info, dict):
+            continue
+        
+        domain = norm_domain(company_info.get("domain", ""))
+        if not domain:
+            # Try website as fallback
+            domain = norm_domain(company_info.get("website", ""))
+        
+        if not domain:
+            continue
+        
         company = company_by_domain.get(domain)
         if not company:
             continue
+        
+        # Extract location
+        loc_info = item.get("location", {})
+        if isinstance(loc_info, dict):
+            location = ", ".join(filter(None, [
+                loc_info.get("city", ""),
+                loc_info.get("state", ""),
+                loc_info.get("country", "")
+            ]))
+        else:
+            location = ""
+        
+        # Extract company size
+        company_size = company_info.get("employeeCount")
         
         person = Person(
             license_no=company.license_no,
@@ -694,9 +751,11 @@ def _parse_leadsforge_response(response: dict, company_by_domain: dict[str, CSLB
             lf_id=item.get("id", ""),
             first_name=item.get("firstName", ""),
             last_name=item.get("lastName", ""),
-            lf_title=item.get("title", ""),
-            lf_company=item.get("company", ""),
-            lf_location=item.get("location", ""),
+            lf_title=item.get("jobTitle", ""),
+            lf_company=company_info.get("domain", ""),
+            lf_location=location,
+            company_size=company_size,
+            company_industry=company_info.get("industry", ""),
         )
         people.append(person)
     
@@ -1248,7 +1307,7 @@ def estimate_mode(sb: SupabaseClient) -> None:
     suppress_linkedin, suppress_emails, suppress_domains = load_suppression_sets(sb)
     
     try:
-        lf_people = leadsforge_search(lf_sample, lf_treg, lf_cost_tracker, suppress_domains)
+        lf_people = leadsforge_search(lf_sample, lf_treg, lf_cost_tracker, suppress_domains, suppress_emails, suppress_linkedin)
         lf_spent = lf_cost_tracker.spent_usd()
         
         people_per_company = len(lf_people) / max(len(lf_sample), 1)
@@ -1260,63 +1319,81 @@ def estimate_mode(sb: SupabaseClient) -> None:
     except Exception as e:
         print(f"LeadsForge sampling failed: {e}")
         lf_spent = 0
-        people_per_company = 0
+        people_per_company = 2.5  # Fallback assumption if sampling fails
     
-    # Extrapolate full costs
+    # Extrapolate full costs (based on observed rates Nov 1, 2026)
     print("\n" + "="*80)
-    print("COST EXTRAPOLATION")
+    print("COST EXTRAPOLATION (Observed Rates)")
     print("="*80)
     
     expected_people = int(extrapolated_domains * people_per_company)
     
-    # Icypeas: ~25 people per query, $0.00038/row
+    # Icypeas: ~25 people per query, $0.00038/row, ~67% exact-person match (observed)
+    icypeas_match_rate = 0.67  # Observed
+    icypeas_matches = int(expected_people * icypeas_match_rate)
     icypeas_queries = (expected_people // 25) + 1
     icypeas_cost = expected_people * (COST_ICYPEAS_SEARCH / 1e6)
     
-    # Blitz: assume 50% hit rate
-    blitz_attempts = expected_people
-    blitz_hits = int(blitz_attempts * 0.5)
+    # Blitz: ~$0.0005/hit (observed), assume 50% hit rate
+    blitz_attempts = icypeas_matches
+    blitz_hit_rate = 0.50  # Assumption
+    blitz_hits = int(blitz_attempts * blitz_hit_rate)
     blitz_cost = blitz_hits * (COST_BLITZ_EMAIL / 1e6)
     
-    # MV: all blitz hits
+    # MV: all blitz hits (catalog rate)
     mv_cost = blitz_hits * (COST_MV / 1e6)
     
-    # BounceBan: assume 10% catch-alls
+    # BounceBan: assume 10% catch-alls (catalog rate)
     bb_count = int(blitz_hits * 0.1)
     bb_cost = bb_count * (COST_BB / 1e6)
     
-    # LeadsForge: full run
+    # LeadsForge: full run (~117 calls free, then $0.005/call observed)
     lf_calls_full = (extrapolated_domains // domains_per_call) + 1
-    lf_cost_full = lf_calls_full * (COST_LEADSFORGE_CALL / 1e6)
+    lf_free_calls = 117  # Observed
+    lf_paid_calls = max(0, lf_calls_full - lf_free_calls)
+    lf_cost_full = lf_paid_calls * (COST_LEADSFORGE_CALL / 1e6)
     
     total_cost = lf_cost_full + icypeas_cost + blitz_cost + mv_cost + bb_cost
     
     pilot_ready = 100
-    pilot_cost = (pilot_ready / max(blitz_hits, 1)) * total_cost
+    pilot_cost = (pilot_ready / max(blitz_hits, 1)) * total_cost if blitz_hits > 0 else 5.0
     
     print(f"\nWindow companies: {total_companies:,}")
     print(f"Expected domains: ~{extrapolated_domains:,} ({domain_rate:.1%})")
     print(f"Expected people (LeadsForge): ~{expected_people:,}")
-    print(f"Expected ready leads (50% Blitz hit): ~{blitz_hits:,}")
+    print(f"Icypeas exact matches (~67%): ~{icypeas_matches:,}")
+    print(f"Expected ready leads ({blitz_hit_rate:.0%} Blitz hit): ~{blitz_hits:,}")
     print()
-    print(f"Cost breakdown:")
-    print(f"  Hunter domain (free):     $0.00")
-    print(f"  LeadsForge ({lf_calls_full} calls):    ${lf_cost_full:.2f}")
-    print(f"  Icypeas ({icypeas_queries} queries):     ${icypeas_cost:.2f}")
-    print(f"  Blitz email ({blitz_hits} hits):    ${blitz_cost:.2f}")
-    print(f"  MillionVerifier:          ${mv_cost:.2f}")
-    print(f"  BounceBan (catch-alls):   ${bb_cost:.2f}")
-    print(f"  ----------------------------------")
-    print(f"  TOTAL (full window):      ${total_cost:.2f}")
+    print(f"Cost breakdown (observed rates + catalog):")
+    print(f"  Hunter domain (free):         $0.00")
+    print(f"  LeadsForge ({lf_calls_full} calls):        ${lf_cost_full:.2f}")
+    print(f"    ({lf_free_calls} free + {lf_paid_calls} paid @ $0.005)")
+    print(f"  Icypeas ({icypeas_queries} queries):         ${icypeas_cost:.2f}")
+    print(f"    (@ $0.00038/row, ~67% match rate)")
+    print(f"  Blitz email ({blitz_hits} hits):      ${blitz_cost:.2f}")
+    print(f"    (@ ~$0.0005/hit)")
+    print(f"  MillionVerifier (catalog):    ${mv_cost:.2f}")
+    print(f"  BounceBan (10% catch-alls):   ${bb_cost:.2f}")
+    print(f"  --------------------------------------")
+    print(f"  TOTAL (full window):          ${total_cost:.2f}")
     print()
     print(f"Cost per 1k ready: ${(total_cost / max(blitz_hits, 1) * 1000):.2f}")
     print()
-    print(f"Recommended caps:")
-    print(f"  --pilot (100 ready):      ${max(5.0, pilot_cost * 1.5):.2f}")
-    print(f"  --target-ready 500:       ${max(25.0, (500 / max(blitz_hits, 1)) * total_cost * 1.4):.2f}")
-    print(f"  Full window run:          ${total_cost * 1.4:.2f}")
+    print(f"ASSUMPTIONS:")
+    print(f"  - Domain resolution rate: {domain_rate:.1%} (sampled)")
+    print(f"  - LeadsForge people/company: {people_per_company:.2f} ({'sampled' if lf_spent > 0 else 'assumed'})")
+    print(f"  - Icypeas exact-person match: 67% (observed)")
+    print(f"  - Blitz email hit rate: 50% (assumption)")
+    print(f"  - MV & BounceBan: catalog rates")
+    print(f"  - LeadsForge free calls: ~117 (observed Nov 1, 2026)")
     print()
-    print(f"LeadsForge sample spent: ${lf_spent:.4f} (under ${max_lf_spend} limit)")
+    print(f"Recommended caps (with 40% safety buffer):")
+    print(f"  --pilot (100 ready):          ${max(5.0, pilot_cost * 1.4):.2f}")
+    print(f"  --target-ready 500:           ${max(20.0, (500 / max(blitz_hits, 1)) * total_cost * 1.4):.2f}")
+    print(f"  --target-ready 2000:          ${max(50.0, (2000 / max(blitz_hits, 1)) * total_cost * 1.4):.2f}")
+    print(f"  Full window run (~{blitz_hits:,}):  ${total_cost * 1.4:.2f}")
+    print()
+    print(f"LeadsForge sample spent: ${lf_spent:.4f} / ${max_lf_spend:.2f} limit")
     print()
     print("Next: Re-run with --pilot --cap-usd <amount> or --target-ready N --cap-usd <amount>")
 
@@ -1398,7 +1475,7 @@ def main(argv: list[str] | None = None) -> int:
         companies = resolve_domains_batch(companies, treg, cost_tracker, args.with_paid_domain)
         
         # Stage 2: LeadsForge people search
-        people = leadsforge_search(companies, treg, cost_tracker, suppress_domains)
+        people = leadsforge_search(companies, treg, cost_tracker, suppress_domains, suppress_emails, suppress_linkedin)
         
         if not people:
             print("\nNo people found from LeadsForge")
