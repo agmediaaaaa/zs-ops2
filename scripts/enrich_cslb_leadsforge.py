@@ -1,33 +1,35 @@
 #!/usr/bin/env python3
 """Enrich CSLB companies with LeadsForge → Icypeas → Blitz (Jessica's required flow).
 
-Flow (Oct 30, 2026 pipeline architecture):
+Flow (Nov 1, 2026 pipeline architecture):
   1. CSLB company name → Hunter domain-finder (free) + optional paid Blitz company enrich
-  2. LeadsForge people search (batched domains, suppression always-on)
+  2. LeadsForge people search (batched domains, suppression always-on, no per-company limits)
   3. Icypeas exact-person match (batched ~25 people per query by name+domain)
-  4. Supabase 30-day cache check before paid email find
+  4. Supabase ALL-client cache check (email/LinkedIn/name+domain) before paid email find
   5. Blitz email find from LinkedIn URL
   6. MillionVerifier + BounceBan (catch-alls)
   7. Upsert to pipeline_leads, create lead_list, merge to codicen_campaign_leads
 
 Cost control (mandatory):
-  --cap-usd USD         Hard spend cap (required, no default unlimited mode)
-  --target-ready N      Stop once N ready leads are reached
-  --estimate            Free Hunter sample + small LF sizing (<$0.25), extrapolate costs
-  --pilot               Small target + cap for testing
+  --cap-usd USD                Hard spend cap (required, no default unlimited mode)
+  --target-ready N             Stop once N ready leads are reached
+  --estimate                   Free Hunter sample + small LF sizing (<$0.25), extrapolate costs
+  --pilot                      Small target + cap for testing (100 ready)
+  --window-days N              Window size in days (default: 90)
+  --allow-empty-suppression    Allow empty suppression sets (not recommended)
 
 Window definition:
   The "Codicen window" = CSLB companies with:
     - primary_status = 'CLEAR'
-    - expiration_date_iso BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '120 days'
-  Currently ~23.9k companies (12.2k Sole Owner, 10.4k Corp, 1.3k LLC)
+    - expiration_date_iso BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL 'N days'
+  Default: 90 days (~22k companies)
 
 Examples:
   # Estimate on current window (free Hunter + small LF sample, <$0.25 total)
   python3 scripts/enrich_cslb_leadsforge.py --estimate
 
-  # Pilot run (~100 ready leads)
-  python3 scripts/enrich_cslb_leadsforge.py --pilot --cap-usd 5.00
+  # Pilot run (100 ready leads, $1 cap, 90-day window)
+  python3 scripts/enrich_cslb_leadsforge.py --pilot --cap-usd 1.00 --window-days 90
 
   # Full run with 1000 ready target
   python3 scripts/enrich_cslb_leadsforge.py --target-ready 1000 --cap-usd 50.00
@@ -52,6 +54,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
+import urllib.parse
 from urllib.parse import urlparse
 
 # Environment
@@ -339,10 +342,19 @@ class SupabaseClient:
                 url += f"&{k}={v}"
         if limit:
             url += f"&limit={limit}"
+            req = urllib.request.Request(url, headers=self._headers())
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return json.loads(resp.read().decode())
         
-        req = urllib.request.Request(url, headers=self._headers())
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            return json.loads(resp.read().decode())
+        # Paginate; PostgREST silently caps responses at 1000 rows
+        out, page = [], 1000
+        while True:
+            req = urllib.request.Request(url + f"&offset={len(out)}&limit={page}", headers=self._headers())
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                rows = json.loads(resp.read().decode())
+            out.extend(rows)
+            if len(rows) < page:
+                return out
     
     def insert(self, table: str, rows: list[dict]) -> list[dict]:
         """Insert rows into Supabase table."""
@@ -387,9 +399,12 @@ def norm_li(u: str) -> str:
     return (u or "").lower().split("?")[0].rstrip("/")
 
 
-def load_codicen_window(sb: SupabaseClient) -> list[CSLBCompany]:
-    """Load CSLB companies in Codicen window (CLEAR, expiring 0-120 days)."""
-    print("Loading Codicen window from Supabase...")
+def load_codicen_window(sb: SupabaseClient, window_days: int = 90) -> list[CSLBCompany]:
+    """Load CSLB companies in Codicen window (CLEAR, expiring 0-N days)."""
+    today = datetime.now().date().isoformat()
+    end_date = (datetime.now().date() + timedelta(days=window_days)).isoformat()
+    
+    print(f"Loading Codicen window from Supabase (window: {window_days} days)...")
     rows = sb.query(
         "cslb_companies",
         select="license_no,business_name,full_business_name,city,state,county,business_phone,"
@@ -399,17 +414,96 @@ def load_codicen_window(sb: SupabaseClient) -> list[CSLBCompany]:
         filters={
             "client": "eq.Codicen",
             "primary_status": "eq.CLEAR",
-            "expiration_date_iso": f"gte.{datetime.now().date().isoformat()}",
-            "expiration_date_iso": f"lte.{(datetime.now().date() + timedelta(days=120)).isoformat()}",
+            "and": f"(expiration_date_iso.gte.{today},expiration_date_iso.lte.{end_date})",
         },
     )
     companies = [CSLBCompany(**{k: v or "" for k, v in r.items()}) for r in rows]
-    print(f"  Loaded {len(companies):,} companies in window (CLEAR, exp 0-120 days)")
+    print(f"  Loaded {len(companies):,} companies in window (CLEAR, exp {today} to {end_date}, {window_days} days)")
     return companies
 
 
-def load_suppression_sets(sb: SupabaseClient) -> tuple[set[str], set[str], set[str]]:
-    """Load suppression sets from Supabase (LinkedIn, emails, domains)."""
+def load_plusvibe_suppression() -> tuple[set[str], set[str], set[str]]:
+    """Load PlusVibe workspace leads and blocklist for Codicen."""
+    if not PLUSVIBE_API_KEY:
+        print("  PlusVibe: no API key, skipping")
+        return set(), set(), set()
+    
+    print("  Loading PlusVibe workspace suppression...")
+    
+    linkedin_urls = set()
+    emails = set()
+    domains = set()
+    
+    # Get Codicen workspace ID (assumption: first workspace or known ID)
+    # TODO: Update with actual Codicen workspace ID when known
+    workspace_id = None
+    
+    try:
+        # List workspaces
+        req = urllib.request.Request(
+            "https://api.plusvibe.com/v1/workspaces",
+            headers={"Authorization": f"Bearer {PLUSVIBE_API_KEY}"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            workspaces = json.loads(resp.read().decode())
+        
+        # Find Codicen workspace
+        for ws in workspaces.get("workspaces", []):
+            if "codicen" in ws.get("name", "").lower():
+                workspace_id = ws.get("id")
+                break
+        
+        if not workspace_id and workspaces.get("workspaces"):
+            workspace_id = workspaces["workspaces"][0].get("id")
+        
+        if not workspace_id:
+            print("    No PlusVibe workspace found")
+            return set(), set(), set()
+        
+        print(f"    Workspace ID: {workspace_id}")
+        
+        # Get all leads from workspace
+        req = urllib.request.Request(
+            f"https://api.plusvibe.com/v1/workspaces/{workspace_id}/leads",
+            headers={"Authorization": f"Bearer {PLUSVIBE_API_KEY}"}
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            leads_data = json.loads(resp.read().decode())
+        
+        for lead in leads_data.get("leads", []):
+            if lead.get("linkedin_url"):
+                linkedin_urls.add(norm_li(lead["linkedin_url"]))
+            if lead.get("email"):
+                emails.add(lead["email"].lower().strip())
+            if lead.get("company_domain"):
+                domains.add(norm_domain(lead["company_domain"]))
+        
+        # Get blocklist
+        req = urllib.request.Request(
+            f"https://api.plusvibe.com/v1/workspaces/{workspace_id}/blocklist",
+            headers={"Authorization": f"Bearer {PLUSVIBE_API_KEY}"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            blocklist_data = json.loads(resp.read().decode())
+        
+        for item in blocklist_data.get("blocklist", []):
+            if item.get("linkedin_url"):
+                linkedin_urls.add(norm_li(item["linkedin_url"]))
+            if item.get("email"):
+                emails.add(item["email"].lower().strip())
+            if item.get("domain"):
+                domains.add(norm_domain(item["domain"]))
+        
+        print(f"    PlusVibe: {len(linkedin_urls)} LinkedIn, {len(emails)} emails, {len(domains)} domains")
+        
+    except Exception as e:
+        print(f"    PlusVibe error (non-fatal): {e}")
+    
+    return linkedin_urls, emails, domains
+
+
+def load_suppression_sets(sb: SupabaseClient, allow_empty: bool = False) -> tuple[set[str], set[str], set[str]]:
+    """Load suppression sets from Supabase + PlusVibe (LinkedIn, emails, domains)."""
     print("Loading suppression sets...")
     
     linkedin_urls = set()
@@ -426,6 +520,8 @@ def load_suppression_sets(sb: SupabaseClient) -> tuple[set[str], set[str], set[s
         if r.get("company_domain"):
             domains.add(norm_domain(r["company_domain"]))
     
+    print(f"  Supabase codicen_campaign_leads: {len(linkedin_urls)} LinkedIn, {len(emails)} emails, {len(domains)} domains")
+    
     # From pipeline_leads (Codicen campaign)
     rows = sb.query("pipeline_leads", select="linkedin,email,company_domain", filters={"client": "eq.Codicen"})
     for r in rows:
@@ -436,44 +532,93 @@ def load_suppression_sets(sb: SupabaseClient) -> tuple[set[str], set[str], set[s
         if r.get("company_domain"):
             domains.add(norm_domain(r["company_domain"]))
     
-    # TODO: Add PlusVibe workspace suppression (requires PlusVibe API)
+    print(f"  Supabase pipeline_leads (Codicen): +{len(linkedin_urls) - len(set())} LinkedIn, +{len(emails) - len(set())} emails, +{len(domains) - len(set())} domains")
     
-    print(f"  Suppression: {len(linkedin_urls):,} LinkedIn, {len(emails):,} emails, {len(domains):,} domains")
+    # From PlusVibe
+    pv_linkedin, pv_emails, pv_domains = load_plusvibe_suppression()
+    linkedin_urls.update(pv_linkedin)
+    emails.update(pv_emails)
+    domains.update(pv_domains)
+    
+    print(f"  TOTAL suppression: {len(linkedin_urls):,} LinkedIn, {len(emails):,} emails, {len(domains):,} domains")
+    
+    if not linkedin_urls and not emails and not allow_empty:
+        raise RuntimeError(
+            "ABORT: Both LinkedIn and email suppression sets are empty! "
+            "This risks duplicates. Pass --allow-empty-suppression to override."
+        )
     
     if not linkedin_urls and not emails:
-        print("  WARNING: Both LinkedIn and email suppression sets are empty!")
+        print("  WARNING: Both LinkedIn and email suppression sets are empty (--allow-empty-suppression passed)")
     
     return linkedin_urls, emails, domains
 
 
 def load_supabase_cache(sb: SupabaseClient, days: int = 30) -> dict[str, dict]:
-    """Load Supabase 30-day email cache keyed by LinkedIn URL."""
-    print(f"Loading Supabase {days}-day email cache...")
+    """Load Supabase 30-day email cache keyed by LinkedIn URL, email, and name+domain.
+    
+    Checks ALL clients' pipeline_leads rows (not just Codicen) to never pay twice for the same person.
+    """
+    print(f"Loading Supabase {days}-day email cache (all clients)...")
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     
-    cache = {}
+    cache_by_linkedin = {}
+    cache_by_email = {}
+    cache_by_name_domain = {}
     
-    # From pipeline_leads
+    # From pipeline_leads (ALL clients, ~70k recent rows)
     rows = sb.query(
         "pipeline_leads",
-        select="linkedin,email,email_source,mv_result,updated_at",
+        select="linkedin,email,email_source,mv_status,first_name,last_name,company_domain,updated_at",
         filters={
-            "client": "eq.Codicen",
             "email": "not.is.null",
             "updated_at": f"gte.{cutoff}",
         },
     )
+    
     for r in rows:
-        if r.get("linkedin") and r.get("email"):
-            cache[norm_li(r["linkedin"])] = {
-                "email": r["email"],
+        email = (r.get("email") or "").lower().strip()
+        if not email:
+            continue
+        
+        # Cache by LinkedIn URL
+        if r.get("linkedin"):
+            li_norm = norm_li(r["linkedin"])
+            cache_by_linkedin[li_norm] = {
+                "email": email,
                 "source": r.get("email_source", "unknown"),
-                "mv_result": r.get("mv_result"),
+                "mv_result": r.get("mv_status"),
+                "fresh": True,
+            }
+        
+        # Cache by email
+        cache_by_email[email] = {
+            "email": email,
+            "source": r.get("email_source", "unknown"),
+            "mv_result": r.get("mv_status"),
+            "fresh": True,
+        }
+        
+        # Cache by name+domain
+        first = (r.get("first_name") or "").lower().strip()
+        last = (r.get("last_name") or "").lower().strip()
+        domain = norm_domain(r.get("company_domain") or "")
+        if first and last and domain:
+            key = f"{first}|{last}|{domain}"
+            cache_by_name_domain[key] = {
+                "email": email,
+                "source": r.get("email_source", "unknown"),
+                "mv_result": r.get("mv_status"),
                 "fresh": True,
             }
     
-    print(f"  Cache: {len(cache):,} fresh emails (<{days} days old)")
-    return cache
+    print(f"  Cache: {len(cache_by_linkedin):,} LinkedIn, {len(cache_by_email):,} emails, {len(cache_by_name_domain):,} name+domain (<{days} days old)")
+    
+    return {
+        "linkedin": cache_by_linkedin,
+        "email": cache_by_email,
+        "name_domain": cache_by_name_domain,
+    }
 
 
 def resolve_domains_batch(
@@ -626,7 +771,7 @@ def leadsforge_search(
     print(f"  {len(valid_companies):,} companies with domains (not suppressed)")
     
     # Batch domains (LeadsForge accepts multiple domains per call)
-    batch_size = 100  # Balance: API limits vs call minimization
+    batch_size = int(os.environ.get("LF_BATCH_SIZE", "25"))  # Balance: API limits vs call minimization
     company_by_domain = {norm_domain(c.company_domain): c for c in valid_companies}
     domains = list(company_by_domain.keys())
     
@@ -654,7 +799,6 @@ def leadsforge_search(
                 "excludeEmails": list(suppress_emails),
                 "excludeDomains": exclude_domains_clean,
                 "excludeLinkedInURLs": list(suppress_linkedin),
-                "maxContactsPerCompany": 3,
                 "limit": 100,
             }
             
@@ -898,7 +1042,7 @@ def check_cache_and_enrich(
     
     stats = Counter()
     
-    # Check cache first
+    # Check cache first (LinkedIn, email, name+domain)
     for person in people:
         li_norm = norm_li(person.linkedin_url)
         
@@ -908,20 +1052,46 @@ def check_cache_and_enrich(
             stats["linkedin_suppressed"] += 1
             continue
         
-        # Check cache
-        if li_norm in cache:
-            cached = cache[li_norm]
+        # Check cache by LinkedIn
+        if li_norm and li_norm in cache.get("linkedin", {}):
+            cached = cache["linkedin"][li_norm]
             person.email = cached["email"]
             person.email_source = f"cache:{cached['source']}"
             person.mv_result = cached.get("mv_result", "")
             person.cached = True
-            stats["cache_hit"] += 1
+            stats["cache_hit_linkedin"] += 1
             continue
+        
+        # Check cache by email (if person already has email somehow)
+        if person.email:
+            email_lower = person.email.lower().strip()
+            if email_lower in cache.get("email", {}):
+                cached = cache["email"][email_lower]
+                person.mv_result = cached.get("mv_result", "")
+                person.cached = True
+                stats["cache_hit_email"] += 1
+                continue
+        
+        # Check cache by name+domain
+        first = person.first_name.lower().strip()
+        last = person.last_name.lower().strip()
+        domain = norm_domain(person.company_domain)
+        if first and last and domain:
+            key = f"{first}|{last}|{domain}"
+            if key in cache.get("name_domain", {}):
+                cached = cache["name_domain"][key]
+                person.email = cached["email"]
+                person.email_source = f"cache:{cached['source']}"
+                person.mv_result = cached.get("mv_result", "")
+                person.cached = True
+                stats["cache_hit_name_domain"] += 1
+                continue
     
     # Find people needing email enrichment
     need_email = [p for p in people if not p.email and not p.suppressed and p.linkedin_url]
     
-    print(f"  Cache hits: {stats['cache_hit']} / {len(people)}")
+    total_cache_hits = stats.get("cache_hit_linkedin", 0) + stats.get("cache_hit_email", 0) + stats.get("cache_hit_name_domain", 0)
+    print(f"  Cache hits: {total_cache_hits} / {len(people)} (LinkedIn: {stats.get('cache_hit_linkedin', 0)}, email: {stats.get('cache_hit_email', 0)}, name+domain: {stats.get('cache_hit_name_domain', 0)})")
     print(f"  Need Blitz: {len(need_email)}")
     
     if not need_email:
@@ -1239,9 +1409,9 @@ def write_report(
     print(json.dumps(report, indent=2))
 
 
-def estimate_mode(sb: SupabaseClient) -> None:
+def estimate_mode(sb: SupabaseClient, window_days: int = 90, allow_empty_suppression: bool = False) -> None:
     """
-    Estimate mode: Free Hunter on ALL window companies, small LeadsForge sample (<$0.25).
+    Estimate mode: Free Hunter on sampled companies, small LeadsForge sample (<$0.25).
     Extrapolate costs and print recommended caps.
     """
     print("="*80)
@@ -1249,21 +1419,22 @@ def estimate_mode(sb: SupabaseClient) -> None:
     print("="*80)
     
     # Load full window
-    companies = load_codicen_window(sb)
+    companies = load_codicen_window(sb, window_days)
     total_companies = len(companies)
     
     if not companies:
         print("ERROR: No companies in window")
         return
     
-    print(f"\nWindow: {total_companies:,} companies (CLEAR, exp 0-120 days)")
+    print(f"\nWindow: {total_companies:,} companies (CLEAR, exp 0-{window_days} days)")
     
-    # Stage 1: Hunter domain resolution on ALL companies (free)
-    print("\n--- Hunter Domain Resolution (free, all companies) ---")
+    # Stage 1: Hunter domain resolution on sampled companies (free)
+    print("\n--- Hunter Domain Resolution (free, sampled companies) ---")
     
-    # Use a sample for speed (or all if fast enough)
-    sample_size = min(500, total_companies)
-    sample = companies[:sample_size]
+    # Use a seeded random sample for speed
+    import random
+    sample_size = min(int(os.environ.get("ESTIMATE_SAMPLE", "500")), total_companies)
+    sample = random.Random(42).sample(companies, sample_size)
     
     print(f"Resolving domains for {len(sample):,} sample companies...")
     
@@ -1304,7 +1475,7 @@ def estimate_mode(sb: SupabaseClient) -> None:
     lf_treg = TregClient(TREG_TOKEN, lf_cost_tracker)
     
     # Load minimal suppression (just to avoid errors)
-    suppress_linkedin, suppress_emails, suppress_domains = load_suppression_sets(sb)
+    suppress_linkedin, suppress_emails, suppress_domains = load_suppression_sets(sb, allow_empty=allow_empty_suppression)
     
     try:
         lf_people = leadsforge_search(lf_sample, lf_treg, lf_cost_tracker, suppress_domains, suppress_emails, suppress_linkedin)
@@ -1312,8 +1483,8 @@ def estimate_mode(sb: SupabaseClient) -> None:
         
         people_per_company = len(lf_people) / max(len(lf_sample), 1)
         
-        print(f"\nLeadsForge sample: {len(lf_people)} people from {len(lf_sample)} companies")
-        print(f"  = {people_per_company:.2f} people/company")
+        print(f"\nLeadsForge sample: {len(lf_people)} people from {len(lf_sample)} companies (sampled)")
+        print(f"  = {people_per_company:.2f} people/company (sampled)")
         print(f"  Spent: ${lf_spent:.4f}")
         
     except Exception as e:
@@ -1347,8 +1518,15 @@ def estimate_mode(sb: SupabaseClient) -> None:
     bb_count = int(blitz_hits * 0.1)
     bb_cost = bb_count * (COST_BB / 1e6)
     
+    # Ready leads = MV valid + BB deliverable
+    # Assume 85% MV valid, 90% BB deliverable (on catch-alls only)
+    mv_valid_rate = 0.85
+    bb_deliverable_rate = 0.90
+    ready_count = int(blitz_hits * mv_valid_rate * (1 - 0.1 + 0.1 * bb_deliverable_rate))  # Most pass MV, some need BB
+    
     # LeadsForge: full run (~117 calls free, then $0.005/call observed)
-    lf_calls_full = (extrapolated_domains // domains_per_call) + 1
+    lf_batch_size = int(os.environ.get("LF_BATCH_SIZE", "25"))
+    lf_calls_full = (extrapolated_domains // lf_batch_size) + (1 if extrapolated_domains % lf_batch_size else 0)
     lf_free_calls = 117  # Observed
     lf_paid_calls = max(0, lf_calls_full - lf_free_calls)
     lf_cost_full = lf_paid_calls * (COST_LEADSFORGE_CALL / 1e6)
@@ -1356,46 +1534,73 @@ def estimate_mode(sb: SupabaseClient) -> None:
     total_cost = lf_cost_full + icypeas_cost + blitz_cost + mv_cost + bb_cost
     
     pilot_ready = 100
-    pilot_cost = (pilot_ready / max(blitz_hits, 1)) * total_cost if blitz_hits > 0 else 5.0
+    pilot_cost = (pilot_ready / max(ready_count, 1)) * total_cost if ready_count > 0 else 1.0
     
     print(f"\nWindow companies: {total_companies:,}")
     print(f"Expected domains: ~{extrapolated_domains:,} ({domain_rate:.1%})")
-    print(f"Expected people (LeadsForge): ~{expected_people:,}")
+    print(f"Expected people (LeadsForge): ~{expected_people:,} ({'sampled' if lf_spent > 0 else 'assumed'})")
     print(f"Icypeas exact matches (~67%): ~{icypeas_matches:,}")
-    print(f"Expected ready leads ({blitz_hit_rate:.0%} Blitz hit): ~{blitz_hits:,}")
+    print(f"Blitz hits (~50%): ~{blitz_hits:,}")
+    print(f"Expected ready leads (MV+BB): ~{ready_count:,}")
     print()
     print(f"Cost breakdown (observed rates + catalog):")
-    print(f"  Hunter domain (free):         $0.00")
-    print(f"  LeadsForge ({lf_calls_full} calls):        ${lf_cost_full:.2f}")
-    print(f"    ({lf_free_calls} free + {lf_paid_calls} paid @ $0.005)")
-    print(f"  Icypeas ({icypeas_queries} queries):         ${icypeas_cost:.2f}")
-    print(f"    (@ $0.00038/row, ~67% match rate)")
-    print(f"  Blitz email ({blitz_hits} hits):      ${blitz_cost:.2f}")
-    print(f"    (@ ~$0.0005/hit)")
-    print(f"  MillionVerifier (catalog):    ${mv_cost:.2f}")
-    print(f"  BounceBan (10% catch-alls):   ${bb_cost:.2f}")
-    print(f"  --------------------------------------")
-    print(f"  TOTAL (full window):          ${total_cost:.2f}")
+    print(f"  Hunter domain (free):              $0.00")
+    print(f"  LeadsForge ({lf_calls_full} calls, batch={lf_batch_size}): ${lf_cost_full:.2f}")
+    print(f"    ({lf_free_calls} free + {lf_paid_calls} paid @ $0.005/call)")
+    print(f"  Icypeas ({icypeas_queries} queries):              ${icypeas_cost:.2f}")
+    print(f"    (~{expected_people:,} rows @ $0.00038/row, ~67% match)")
+    print(f"  Blitz email ({blitz_hits} hits):           ${blitz_cost:.2f}")
+    print(f"    (~50% hit rate @ ~$0.0005/hit)")
+    print(f"  MillionVerifier (catalog):         ${mv_cost:.2f}")
+    print(f"  BounceBan (10% catch-alls):        ${bb_cost:.2f}")
+    print(f"  ----------------------------------------")
+    print(f"  TOTAL (full window):               ${total_cost:.2f}")
     print()
-    print(f"Cost per 1k ready: ${(total_cost / max(blitz_hits, 1) * 1000):.2f}")
+    print(f"Cost per 1k ready: ${(total_cost / max(ready_count, 1) * 1000):.2f}")
+    print()
+    print(f"PILOT BREAKDOWN (100 ready leads):")
+    print(f"  LeadsForge:        ${(pilot_ready / max(ready_count, 1)) * lf_cost_full:.2f}")
+    print(f"  Icypeas:           ${(pilot_ready / max(ready_count, 1)) * icypeas_cost:.2f}")
+    print(f"  Blitz:             ${(pilot_ready / max(ready_count, 1)) * blitz_cost:.2f}")
+    print(f"  MV + BB:           ${(pilot_ready / max(ready_count, 1)) * (mv_cost + bb_cost):.2f}")
+    print(f"  ----------------------------------------")
+    print(f"  TOTAL:             ${pilot_cost:.2f}")
     print()
     print(f"ASSUMPTIONS:")
     print(f"  - Domain resolution rate: {domain_rate:.1%} (sampled)")
     print(f"  - LeadsForge people/company: {people_per_company:.2f} ({'sampled' if lf_spent > 0 else 'assumed'})")
     print(f"  - Icypeas exact-person match: 67% (observed)")
     print(f"  - Blitz email hit rate: 50% (assumption)")
-    print(f"  - MV & BounceBan: catalog rates")
-    print(f"  - LeadsForge free calls: ~117 (observed Nov 1, 2026)")
+    print(f"  - MV valid rate: 85%, BB deliverable: 90% (assumptions)")
+    print(f"  - LeadsForge batch size: {lf_batch_size} domains/call")
+    print(f"  - LeadsForge free calls: ~{lf_free_calls} (observed Nov 1, 2026)")
     print()
     print(f"Recommended caps (with 40% safety buffer):")
-    print(f"  --pilot (100 ready):          ${max(5.0, pilot_cost * 1.4):.2f}")
-    print(f"  --target-ready 500:           ${max(20.0, (500 / max(blitz_hits, 1)) * total_cost * 1.4):.2f}")
-    print(f"  --target-ready 2000:          ${max(50.0, (2000 / max(blitz_hits, 1)) * total_cost * 1.4):.2f}")
-    print(f"  Full window run (~{blitz_hits:,}):  ${total_cost * 1.4:.2f}")
+    buffer = 1.4
+    print(f"  --pilot (100 ready):               ${pilot_cost * buffer:.2f}")
+    print(f"  --target-ready 500:                ${(500 / max(ready_count, 1)) * total_cost * buffer:.2f}")
+    print(f"  --target-ready 2000:               ${(2000 / max(ready_count, 1)) * total_cost * buffer:.2f}")
+    print(f"  Full window run (~{ready_count:,}):     ${total_cost * buffer:.2f}")
+    print()
+    
+    # Check Treg balance
+    try:
+        dummy_treg = TregClient(TREG_TOKEN, CostTracker(999999.0))
+        balance_resp = dummy_treg._call("treg", "balance", {}, timeout=10.0)
+        balance_usd = balance_resp.get("balance_usd", 0.0) if isinstance(balance_resp, dict) else 0.0
+        print(f"Treg balance: ${balance_usd:.2f}")
+        
+        if pilot_cost * buffer > balance_usd:
+            print(f"  ⚠️  WARNING: Pilot cap (${pilot_cost * buffer:.2f}) exceeds balance!")
+        if total_cost * buffer > balance_usd:
+            print(f"  ⚠️  WARNING: Full window cap (${total_cost * buffer:.2f}) exceeds balance!")
+    except Exception:
+        pass
+    
     print()
     print(f"LeadsForge sample spent: ${lf_spent:.4f} / ${max_lf_spend:.2f} limit")
     print()
-    print("Next: Re-run with --pilot --cap-usd <amount> or --target-ready N --cap-usd <amount>")
+    print("Next: python3 scripts/enrich_cslb_leadsforge.py --pilot --cap-usd 1.00 --window-days 90")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1408,6 +1613,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--target-ready", type=int, help="Stop once N ready leads are reached")
     ap.add_argument("--cap-usd", type=float, help="Hard spend cap in USD (REQUIRED for paid runs)")
     ap.add_argument("--with-paid-domain", action="store_true", help="Allow paid Blitz company enrich if Hunter misses (off by default)")
+    ap.add_argument("--window-days", type=int, default=90, help="Window size in days (default: 90)")
+    ap.add_argument("--allow-empty-suppression", action="store_true", help="Allow empty suppression sets (not recommended)")
     ap.add_argument("--out-dir", type=Path, default=OUT_DIR, help="Output directory")
     
     args = ap.parse_args(argv)
@@ -1424,7 +1631,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.estimate:
         # Estimate mode - no cap required
         sb = SupabaseClient(SUPABASE_URL, SUPABASE_KEY)
-        estimate_mode(sb)
+        estimate_mode(sb, window_days=args.window_days, allow_empty_suppression=args.allow_empty_suppression)
         return 0
     
     # Paid runs require cap
@@ -1451,7 +1658,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Mode: {mode}")
     print(f"Target ready: {target_ready}")
     print(f"Cap: ${args.cap_usd:.2f}")
+    print(f"Window days: {args.window_days}")
     print(f"Paid domain enrich: {args.with_paid_domain}")
+    print(f"Allow empty suppression: {args.allow_empty_suppression}")
     print(f"Batch ID: {batch_id}")
     print()
     
@@ -1461,8 +1670,8 @@ def main(argv: list[str] | None = None) -> int:
     treg = TregClient(TREG_TOKEN, cost_tracker)
     
     # Load data
-    companies = load_codicen_window(sb)
-    suppress_linkedin, suppress_emails, suppress_domains = load_suppression_sets(sb)
+    companies = load_codicen_window(sb, window_days=args.window_days)
+    suppress_linkedin, suppress_emails, suppress_domains = load_suppression_sets(sb, allow_empty=args.allow_empty_suppression)
     cache = load_supabase_cache(sb, days=30)
     
     if not companies:
