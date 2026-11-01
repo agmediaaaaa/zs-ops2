@@ -1,0 +1,18 @@
+{
+  "pilot": "cslb_dm_scope_and_estimate",
+  "slice": "CLEAR + expires_within_120 from ingest",
+  "slice_rows": 23910,
+  "with_principal": 20840,
+  "estimate_pull_50": {
+    "expected_usd": 0.037562,
+    "max_usd": 0.0685,
+    "recommended_cap_usd": 0.0959,
+    "est_cost_per_1k_ready_usd": 1.67
+  },
+  "scope_only": {
+    "companies_probed": 8,
+    "result": "STOP for --confirm-spend",
+    "note": "Live Treg /call/ returned 401 invalid token in this environment (catalog search still works). Re-run scope/paid with a valid team agent token: treg login --token <key>."
+  },
+  "next_command": "python scripts/enrich_cslb_decision_makers.py --licenses data/cslb/normalized/cslb_licenses_latest.csv --companies 50 --pull 50 --confirm-spend 0.10"
+}
