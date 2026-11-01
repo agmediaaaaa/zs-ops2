@@ -10,9 +10,10 @@
 
 | Table | Role |
 |-------|------|
-| `cslb_companies` | Company universe from CSLB Master + Personnel |
-| `codicen_campaign_leads` | Campaign merge: company fields + people fields **copied** from Lead Database |
-| `"Lead Database"` | People (unchanged schema). Enrichments land here as usual |
+| `cslb_companies` | Company universe from CSLB Master + Personnel. `dm_email` = primary; `emails` jsonb = all scraped addresses |
+| `codicen_campaign_leads` | Campaign merge: one row per license + email |
+| `codicen_email_leads` | Codicen multi-email list from Maps scrapes (**does not write** to Lead Database) |
+| `"Lead Database"` | People (unchanged schema). Do not edit for Apify Maps email loads |
 
 ```
 cslb_companies          "Lead Database"
