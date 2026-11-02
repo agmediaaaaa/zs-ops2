@@ -13,7 +13,8 @@ California contractor deadline register (track + remind). Internal client pack f
 |------|----------------|
 | [Codicen Context.md](./Codicen%20Context.md) | Onboarding + company facts, never-say, booking |
 | [research/](./research/) | ICP, persona, nine fronts, CSLB list build |
-| [campaign-plans/](./campaign-plans/) | Wave 1 GTM, offers, funnel |
+| [campaign-plans/](./campaign-plans/) | Wave 1 GTM, H1–H8 + **O1–O12** offers, funnel |
+| [scripts/email-1-offers-o1-o12.md](./scripts/email-1-offers-o1-o12.md) | Email 1 copy for offers O1–O12 |
 | [scripts/](./scripts/) | Email 1 / 2 / 3 + objections (sendable copy) |
 
 ---

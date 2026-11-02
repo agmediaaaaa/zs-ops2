@@ -4,9 +4,11 @@
 
 Full narrative: [wave1-gtm-brief.md](./wave1-gtm-brief.md).
 
+**O1–O12 offer library (shop calendar, gap card, desk packs, etc.):** [offer-map-o1-o12.md](./offer-map-o1-o12.md) · scripts [../scripts/email-1-offers-o1-o12.md](../scripts/email-1-offers-o1-o12.md).
+
 ---
 
-## Offers (Email 1)
+## Offers (Email 1) — H1–H8 hard fronts
 
 | ID | Offer | Segment | Hard fronts named |
 |----|-------|---------|-------------------|
