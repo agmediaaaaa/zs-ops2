@@ -20,8 +20,7 @@ Usage:
 Environment Variables:
   SUPABASE_URL       - Supabase project URL (defaults to ZS Lead Database)
   SUPABASE_KEY       - Supabase service role key (required)
-  HUNTER_API_KEY     - Hunter.io API key (optional, for candidate discovery)
-  TREG_API_KEY       - Treg API key (required for --verify step)
+  TREG_API_KEY       - Treg API key (required for discovery and verify)
 """
 
 import argparse
@@ -47,7 +46,6 @@ except ImportError:
 # Configuration
 DEFAULT_SUPABASE_URL = "https://npkdhahdvilcctjwzdlf.supabase.co"
 CLEARBIT_AUTOCOMPLETE_URL = "https://autocomplete.clearbit.com/v1/companies/suggest"
-HUNTER_DOMAIN_SEARCH_URL = "https://api.hunter.io/v2/domain-search"
 
 # Rate limiting (requests per minute)
 CLEARBIT_RPM = 300  # Clearbit autocomplete is generous
@@ -271,20 +269,43 @@ def query_treg_hunter(
 def fetch_webpage_content(domain: str, path: str = '') -> Optional[str]:
     """Fetch webpage content from domain
     
+    Tries https:// first, falls back to http://
+    Follows simple redirects once (3xx status)
+    
     Returns: Page text content or None if fetch fails
     """
-    url = f"https://{domain}{path}"
+    protocols = ['https', 'http']
     
-    try:
-        req = Request(url)
-        req.add_header('User-Agent', 'Mozilla/5.0 (compatible; CSLB-Domain-Enrichment/1.0)')
+    for protocol in protocols:
+        url = f"{protocol}://{domain}{path}"
         
-        with urlopen(req, timeout=15) as response:
-            content_type = response.headers.get('Content-Type', '')
-            if 'text/html' not in content_type:
-                return None
+        try:
+            req = Request(url)
+            req.add_header('User-Agent', 'Mozilla/5.0 (compatible; CSLB-Domain-Enrichment/1.0)')
             
-            html = response.read().decode('utf-8', errors='ignore')
+            response = urlopen(req, timeout=15)
+            
+            # Follow simple redirects once (meta refresh or 3xx that urllib didn't handle)
+            final_url = response.geturl()
+            if final_url != url:
+                # Simple meta refresh check
+                html = response.read().decode('utf-8', errors='ignore')
+                meta_match = re.search(r'<meta[^>]*http-equiv=["\']refresh["\'][^>]*content=["\']0;\s*url=([^"\']+)', html, re.IGNORECASE)
+                if meta_match:
+                    redirect_url = meta_match.group(1)
+                    try:
+                        req2 = Request(redirect_url)
+                        req2.add_header('User-Agent', 'Mozilla/5.0 (compatible; CSLB-Domain-Enrichment/1.0)')
+                        response = urlopen(req2, timeout=15)
+                        html = response.read().decode('utf-8', errors='ignore')
+                    except:
+                        pass  # Use original response
+            else:
+                html = response.read().decode('utf-8', errors='ignore')
+            
+            content_type = response.headers.get('Content-Type', '')
+            if 'text/html' not in content_type and 'text/plain' not in content_type:
+                continue  # Try next protocol
             
             # Simple text extraction (remove HTML tags)
             text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
@@ -293,9 +314,11 @@ def fetch_webpage_content(domain: str, path: str = '') -> Optional[str]:
             text = re.sub(r'\s+', ' ', text).strip()
             
             return text[:50000]  # Limit to 50KB of text
+        
+        except Exception as e:
+            continue  # Try next protocol
     
-    except Exception as e:
-        return None
+    return None
 
 
 def find_contact_about_path(domain: str) -> Optional[str]:
@@ -712,6 +735,59 @@ def discover_candidates(
     return stats
 
 
+def extract_domain_tokens(domain: str) -> List[str]:
+    """Extract tokens from domain for similarity matching
+    
+    Examples:
+        'martinsheetmetal.com' → ['martinsheetmetal']
+        'jazz-blues.com' → ['jazz', 'blues']
+        'abc-roofing-inc.net' → ['abc', 'roofing', 'inc']
+    """
+    # Remove TLD
+    domain_lower = domain.lower()
+    for tld in ['.com', '.net', '.org', '.us', '.edu', '.gov', '.co', '.io', '.biz', '.info']:
+        if domain_lower.endswith(tld):
+            domain_lower = domain_lower[:-len(tld)]
+            break
+    
+    # Remove www prefix
+    if domain_lower.startswith('www.'):
+        domain_lower = domain_lower[4:]
+    
+    # Split on hyphens, underscores, dots, numbers
+    parts = re.split(r'[-_.\d]+', domain_lower)
+    
+    # Return non-empty parts of reasonable length
+    tokens = [p for p in parts if len(p) >= 2]
+    
+    return tokens
+
+
+def calculate_domain_token_similarity(company_name: str, domain: str) -> float:
+    """Calculate similarity between company name tokens and domain tokens
+    
+    Returns: score from 0.0 to 1.0 based on token overlap
+    """
+    # Normalize company name to tokens
+    company_normalized = normalize_business_name(company_name).lower()
+    company_tokens = set(re.findall(r'\b\w{2,}\b', company_normalized))
+    
+    # Extract domain tokens
+    domain_tokens = set(extract_domain_tokens(domain))
+    
+    if not company_tokens or not domain_tokens:
+        return 0.0
+    
+    # Calculate Jaccard similarity (intersection over union)
+    intersection = company_tokens & domain_tokens
+    union = company_tokens | domain_tokens
+    
+    if not union:
+        return 0.0
+    
+    return len(intersection) / len(union)
+
+
 def is_us_tld(domain: str) -> bool:
     """Check if domain has a US TLD"""
     # Prefer .com, .us, .org, .net
@@ -737,29 +813,46 @@ def is_us_tld(domain: str) -> bool:
     return False
 
 
-def calculate_verification_rank(candidate: Dict, company: Dict) -> float:
+def calculate_verification_rank(candidate: Dict, company: Dict) -> Tuple[float, float, str]:
     """Calculate ranking score for verification priority
     
-    Returns score (higher = better) based on:
-    - Name similarity (0.0-1.0)
+    Returns (total_score, domain_score, source) for sorting:
+    - Domain token similarity (weighted 0.6, range 0.0-0.6)
+    - Candidate name similarity (weighted 0.3, range 0.0-0.3)
     - .com bonus (+0.05)
     - US TLD bonus (+0.05)
+    - Total range: 0.0 to 1.0
+    
+    Returns tuple for deterministic tie-breaking:
+    (total_score, domain_score_for_tiebreak, source_for_tiebreak)
     """
     company_name = company.get('business_name', '')
     candidate_name = candidate.get('candidate_name', '')
     domain = candidate.get('candidate_domain', '')
+    source = candidate.get('source', '')
     
-    # Base similarity
-    similarity = calculate_name_similarity(company_name, candidate_name)
+    # Domain token similarity (weighted higher, 60%)
+    domain_similarity = calculate_domain_token_similarity(company_name, domain)
+    domain_score = domain_similarity * 0.6
     
-    # TLD bonuses
-    score = similarity
+    # Candidate name similarity (weighted lower, 30%)
+    name_similarity = calculate_name_similarity(company_name, candidate_name)
+    name_score = name_similarity * 0.3
+    
+    # TLD bonuses (10% total available)
+    tld_bonus = 0.0
     if domain.endswith('.com'):
-        score += 0.05
+        tld_bonus += 0.05
     if is_us_tld(domain):
-        score += 0.05
+        tld_bonus += 0.05
     
-    return score
+    total_score = domain_score + name_score + tld_bonus
+    
+    # Return tuple for deterministic sorting:
+    # 1st: total score (higher better)
+    # 2nd: domain score for tie-break (higher better)
+    # 3rd: source for final tie-break (clearbit before hunter alphabetically)
+    return (total_score, domain_similarity, source)
 
 
 def verify_candidates(
@@ -768,6 +861,7 @@ def verify_candidates(
     max_spend_usd: float = 0.0,
     dry_run: bool = False,
     treg_api_key: Optional[str] = None,
+    per_company: int = 1,
 ) -> Dict:
     """Phase 2: Verify pending candidates (paid)
     
@@ -791,18 +885,22 @@ def verify_candidates(
     print(f"Mode: {'DRY RUN' if dry_run else 'LIVE'}")
     print(f"Max spend: ${max_spend_usd:.2f}")
     print(f"Limit: {limit if limit else 'None'}")
+    print(f"Per-company cap: {per_company}")
     print(f"Jev typical cost: ~${JEV_TYPICAL_COST:.5f} per check")
     print(f"Jev reserve per call: ${JEV_RESERVE_PER_CALL:.5f} (released after settlement)")
     print()
     
-    print("Fetching pending candidates...")
+    # Smart pagination: stream pages until we have enough strong candidates
+    # For small --limit, this avoids loading all 78k rows
+    print("Streaming pending candidates...")
     
-    # Step 1: Paginate to get all pending candidates (lightweight - just IDs and names)
-    all_candidates = []
+    target_candidates = limit * 5 if limit else 999999  # Fetch 5x limit for ranking buffer
     page_size = 1000
     offset = 0
+    streamed_candidates = []
+    seen_licenses = set()
     
-    while True:
+    while len(streamed_candidates) < target_candidates:
         batch_response = supabase.table('codicen_domain_candidates').select(
             'license_no, candidate_domain, candidate_name, source'
         ).eq('verification_status', 'pending') \
@@ -813,65 +911,81 @@ def verify_candidates(
         if not batch:
             break
         
-        all_candidates.extend(batch)
+        # Collect unique license_nos from this batch for company lookup
+        batch_licenses = {c['license_no'] for c in batch if c['license_no'] not in seen_licenses}
+        seen_licenses.update(batch_licenses)
+        
+        # Fetch company data for new licenses in this batch (chunked)
+        if batch_licenses:
+            companies_batch = {}
+            licenses_list = list(batch_licenses)
+            chunk_size = 100
+            
+            for i in range(0, len(licenses_list), chunk_size):
+                chunk = licenses_list[i:i + chunk_size]
+                chunk_response = supabase.table('cslb_companies').select(
+                    'license_no, business_name, business_phone, city, state, company_domain'
+                ).in_('license_no', chunk).execute()
+                
+                for company in chunk_response.data:
+                    companies_batch[company['license_no']] = company
+            
+            # Add eligible candidates from this batch
+            for candidate in batch:
+                company = companies_batch.get(candidate['license_no'])
+                if company and not company.get('company_domain'):
+                    streamed_candidates.append((candidate, company))
+        
         offset += page_size
         
         if len(batch) < page_size:
             break
     
-    print(f"Found {len(all_candidates)} pending candidates")
+    print(f"Streamed {len(streamed_candidates)} eligible candidates (companies without domains)")
     
-    if not all_candidates:
-        print("No pending candidates to verify")
+    if not streamed_candidates:
+        print("No eligible candidates")
         return stats
     
-    # Step 2: Fetch company data in CHUNKS to avoid "query too long" error
-    unique_licenses = list({c['license_no'] for c in all_candidates})
-    print(f"Fetching company data for {len(unique_licenses)} unique companies (chunked)...")
-    
-    companies_by_license = {}
-    chunk_size = 100  # Safe chunk size for .in_() queries
-    
-    for i in range(0, len(unique_licenses), chunk_size):
-        chunk = unique_licenses[i:i + chunk_size]
-        chunk_response = supabase.table('cslb_companies').select(
-            'license_no, business_name, business_phone, city, state, company_domain'
-        ).in_('license_no', chunk).execute()
-        
-        for company in chunk_response.data:
-            companies_by_license[company['license_no']] = company
-    
-    # Step 3: Filter out candidates whose companies already have domains
-    eligible_candidates = []
-    for candidate in all_candidates:
-        company = companies_by_license.get(candidate['license_no'])
-        if company and not company.get('company_domain'):
-            eligible_candidates.append((candidate, company))
-    
-    print(f"Found {len(eligible_candidates)} eligible candidates (companies without domains)")
-    
-    if not eligible_candidates:
-        print("No eligible candidates (all companies already have domains)")
-        return stats
-    
-    # Step 4: Rank using this script's own scoring
-    print("Ranking candidates by similarity + TLD bonuses...")
+    # Rank using domain + name similarity
+    print("Ranking by domain tokens + name similarity...")
     ranked = []
-    for candidate, company in eligible_candidates:
-        score = calculate_verification_rank(candidate, company)
-        ranked.append((score, candidate, company))
+    for candidate, company in streamed_candidates:
+        rank_tuple = calculate_verification_rank(candidate, company)
+        ranked.append((rank_tuple, candidate, company))
     
-    ranked.sort(key=lambda x: x[0], reverse=True)
+    # Sort by rank tuple (total_score desc, domain_score desc, source asc)
+    ranked.sort(key=lambda x: (-x[0][0], -x[0][1], x[0][2]))
     
-    # Step 5: Apply limit after ranking
+    # Apply per-company cap: keep at most N candidates per company
+    if per_company:
+        company_counts = {}
+        capped_ranked = []
+        for rank_tuple, candidate, company in ranked:
+            license_no = candidate['license_no']
+            count = company_counts.get(license_no, 0)
+            if count < per_company:
+                capped_ranked.append((rank_tuple, candidate, company))
+                company_counts[license_no] = count + 1
+        ranked = capped_ranked
+    
+    # Apply overall limit
     if limit:
         ranked = ranked[:limit]
     
     print(f"Processing top {len(ranked)} candidates (max spend: ${max_spend_usd:.2f})...\n")
     
-    for idx, (score, candidate, company) in enumerate(ranked, 1):
+    # Track confirmed companies to skip remaining candidates
+    confirmed_companies = set()
+    
+    for idx, (rank_tuple, candidate, company) in enumerate(ranked, 1):
         license_no = candidate['license_no']
         domain = candidate['candidate_domain']
+        total_score = rank_tuple[0]
+        
+        # Skip if this company already has a confirmed candidate
+        if license_no in confirmed_companies:
+            continue
         
         # Check spend limit before verification (reserve cost)
         reserved_cost = JEV_RESERVE_PER_CALL if not dry_run else 0.0
@@ -880,7 +994,7 @@ def verify_candidates(
             print(f"Processed {stats['candidates_processed']} candidates")
             break
         
-        print(f"[{idx}/{len(ranked)}] Verifying {domain} for {license_no} (score: {score:.3f})...")
+        print(f"[{idx}/{len(ranked)}] Verifying {domain} for {license_no} (score: {total_score:.3f})...")
         
         # Verify candidate
         try:
@@ -898,6 +1012,9 @@ def verify_candidates(
             if status == 'jev_confirmed':
                 stats['candidates_confirmed'] += 1
                 print(f"  ✓ CONFIRMED: {reason}")
+                
+                # Mark company as confirmed (skip remaining candidates)
+                confirmed_companies.add(license_no)
                 
                 # Update candidate status
                 if not dry_run:
@@ -992,6 +1109,12 @@ Examples:
         help='Max spend in USD (required for --verify, not dry run)',
     )
     parser.add_argument(
+        '--per-company',
+        type=int,
+        default=1,
+        help='Max candidates to check per company per pass (default: 1)',
+    )
+    parser.add_argument(
         '--supabase-url',
         default=os.environ.get('SUPABASE_URL', DEFAULT_SUPABASE_URL),
         help='Supabase project URL',
@@ -1041,6 +1164,7 @@ Examples:
                 max_spend_usd=args.max_spend_usd or 0.0,
                 dry_run=args.dry_run,
                 treg_api_key=args.treg_api_key,
+                per_company=args.per_company,
             )
         else:
             # Phase 1: Discovery
