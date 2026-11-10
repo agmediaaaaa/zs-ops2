@@ -1,0 +1,8 @@
+# Python dependencies for zs-ops2 scripts
+
+# Supabase client for database access
+supabase>=2.34.0
+
+# Note: Standard library modules used:
+# - urllib (for HTTP requests - no external package needed)
+# - json, re, argparse, time, difflib, etc. (all built-in)
