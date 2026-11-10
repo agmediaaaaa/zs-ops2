@@ -454,7 +454,7 @@ def verify_candidate(
     # Fetch homepage
     homepage_text = fetch_webpage_content(domain)
     if not homepage_text:
-        return 'rejected', 'homepage_fetch_failed', None, 0.0
+        return 'jev_rejected', 'homepage_fetch_failed', None, 0.0
     
     page_texts = [homepage_text]
     
@@ -470,7 +470,7 @@ def verify_candidate(
     
     # Must have at least one identity marker
     if not any(markers.values()):
-        return 'rejected', 'no_identity_markers', None, 0.0
+        return 'jev_rejected', 'no_identity_markers', None, 0.0
     
     # Call Jev classifier (this costs money!)
     if dry_run:
@@ -580,9 +580,16 @@ def discover_candidates(
         # Filter out companies that already have candidates (unless refresh mode)
         if not refresh:
             license_nos = [c['license_no'] for c in batch]
-            existing_response = supabase.table('codicen_domain_candidates').select('license_no') \
-                .in_('license_no', license_nos).execute()
-            existing_license_nos = {row['license_no'] for row in existing_response.data}
+            existing_license_nos = set()
+            
+            # Chunk the lookup to avoid URL length issues
+            chunk_size = 100
+            for i in range(0, len(license_nos), chunk_size):
+                chunk = license_nos[i:i + chunk_size]
+                chunk_response = supabase.table('codicen_domain_candidates').select('license_no') \
+                    .in_('license_no', chunk).execute()
+                existing_license_nos.update(row['license_no'] for row in chunk_response.data)
+            
             eligible = [c for c in batch if c['license_no'] not in existing_license_nos]
         else:
             eligible = batch
@@ -790,15 +797,14 @@ def verify_candidates(
     
     print("Fetching pending candidates...")
     
-    # Paginate to get candidates with company data, ranked by this script's own scoring
+    # Step 1: Paginate to get all pending candidates (lightweight - just IDs and names)
     all_candidates = []
     page_size = 1000
     offset = 0
     
     while True:
-        # Fetch a batch of pending candidates
         batch_response = supabase.table('codicen_domain_candidates').select(
-            'license_no, candidate_domain, candidate_name, name_match_score, source'
+            'license_no, candidate_domain, candidate_name, source'
         ).eq('verification_status', 'pending') \
          .order('license_no') \
          .range(offset, offset + page_size - 1).execute()
@@ -819,15 +825,23 @@ def verify_candidates(
         print("No pending candidates to verify")
         return stats
     
-    # Fetch company data
-    license_nos = list({c['license_no'] for c in all_candidates})
-    companies_response = supabase.table('cslb_companies').select(
-        'license_no, business_name, business_phone, city, state, company_domain'
-    ).in_('license_no', license_nos).execute()
+    # Step 2: Fetch company data in CHUNKS to avoid "query too long" error
+    unique_licenses = list({c['license_no'] for c in all_candidates})
+    print(f"Fetching company data for {len(unique_licenses)} unique companies (chunked)...")
     
-    companies_by_license = {c['license_no']: c for c in companies_response.data}
+    companies_by_license = {}
+    chunk_size = 100  # Safe chunk size for .in_() queries
     
-    # Filter out candidates whose companies already have domains
+    for i in range(0, len(unique_licenses), chunk_size):
+        chunk = unique_licenses[i:i + chunk_size]
+        chunk_response = supabase.table('cslb_companies').select(
+            'license_no, business_name, business_phone, city, state, company_domain'
+        ).in_('license_no', chunk).execute()
+        
+        for company in chunk_response.data:
+            companies_by_license[company['license_no']] = company
+    
+    # Step 3: Filter out candidates whose companies already have domains
     eligible_candidates = []
     for candidate in all_candidates:
         company = companies_by_license.get(candidate['license_no'])
@@ -836,7 +850,12 @@ def verify_candidates(
     
     print(f"Found {len(eligible_candidates)} eligible candidates (companies without domains)")
     
-    # Rank using this script's own scoring
+    if not eligible_candidates:
+        print("No eligible candidates (all companies already have domains)")
+        return stats
+    
+    # Step 4: Rank using this script's own scoring
+    print("Ranking candidates by similarity + TLD bonuses...")
     ranked = []
     for candidate, company in eligible_candidates:
         score = calculate_verification_rank(candidate, company)
@@ -844,7 +863,7 @@ def verify_candidates(
     
     ranked.sort(key=lambda x: x[0], reverse=True)
     
-    # Apply limit after ranking and filtering
+    # Step 5: Apply limit after ranking
     if limit:
         ranked = ranked[:limit]
     

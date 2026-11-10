@@ -16,7 +16,7 @@ All candidates are stored in `codicen_domain_candidates`. Only verified domains 
 
 Uses free APIs to find domain candidates:
 - **Clearbit Autocomplete** - Free, no key required
-- **Hunter.io Domain Search** - Free tier available
+- **Treg Hunter Domain Finder** - Free via Treg (hunter.x.domain-finder)
 
 **What it does:**
 - Queries CLEAR companies in 90-day renewal window without domains
@@ -102,7 +102,7 @@ Stores all domain candidates:
 --limit N              Process only N companies
 --dry-run             Run without writing to database
 --refresh             Reprocess companies that already have candidates
---hunter-api-key KEY  Hunter.io API key (optional)
+--treg-api-key KEY    Treg API key (for hunter.x.domain-finder, or set TREG_API_KEY/TREG_TOKEN)
 ```
 
 ### Verification Mode (--verify)
@@ -164,12 +164,11 @@ Must have at least one marker to proceed. Then calls Jev classifier and checks t
 ```bash
 # Required for both modes
 export SUPABASE_KEY="your-service-role-key"
+# or: export SUPABASE_SERVICE_ROLE_KEY="your-key"
 
-# Optional for discovery
-export HUNTER_API_KEY="your-hunter-key"
-
-# Required for verification (not dry run)
+# Required for discovery (not dry-run) and verification
 export TREG_API_KEY="your-treg-key"
+# or: export TREG_TOKEN="your-token"
 
 # Optional
 export SUPABASE_URL="https://npkdhahdvilcctjwzdlf.supabase.co"
