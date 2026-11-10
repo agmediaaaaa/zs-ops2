@@ -246,7 +246,8 @@ Elapsed time:                     94.3s
 Mode: LIVE
 Max spend: $5.00
 Limit: 250
-Jev cost per call: $0.02
+Jev typical cost: ~$0.00008 per check
+Jev reserve per call: $0.00050 (released after settlement)
 
 Found 250 pending candidates
 Processing candidates (max spend: $5.00)...

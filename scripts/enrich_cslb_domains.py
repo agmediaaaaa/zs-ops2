@@ -203,15 +203,16 @@ def query_clearbit(company_name: str, rate_limiter: RateLimiter) -> List[Dict]:
         return []
 
 
-def query_hunter(
+def query_treg_hunter(
     company_name: str,
     city: Optional[str],
     state: Optional[str],
-    hunter_api_key: Optional[str],
+    treg_api_key: str,
     rate_limiter: RateLimiter
 ) -> List[Dict]:
-    """Query Hunter.io domain search API for company domains
+    """Query free Treg Hunter domain finder for company domains
     
+    Uses hunter.x.domain-finder via Treg API (free).
     Returns list of candidates with domain and name.
     """
     normalized = normalize_business_name(company_name)
@@ -226,46 +227,44 @@ def query_hunter(
         query_parts.append(city)
         query_parts.append("California")
     
-    query = " ".join(query_parts)
+    company_query = " ".join(query_parts)
     
-    url = f"{HUNTER_DOMAIN_SEARCH_URL}?company={quote_plus(query)}"
+    url = f"{TREG_API_URL}/call/hunter.x.domain-finder"
     
-    # Add API key if provided (otherwise use free tier)
-    if hunter_api_key:
-        url += f"&api_key={hunter_api_key}"
+    payload = {
+        'input': {
+            'company': company_query,
+        }
+    }
+    
+    headers = {
+        'Authorization': f'Bearer {treg_api_key}',
+        'Content-Type': 'application/json',
+    }
     
     try:
-        req = Request(url)
-        req.add_header('User-Agent', 'Mozilla/5.0 (compatible; CSLB-Domain-Enrichment/1.0)')
+        req = Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers)
         
         with urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode('utf-8'))
+            result = json.loads(response.read().decode('utf-8'))
         
         results = []
         
-        # Hunter returns a single domain result
-        domain_data = data.get('data', {})
-        if domain_data.get('domain'):
-            results.append({
-                'domain': domain_data['domain'].lower(),
-                'name': domain_data.get('organization', company_name),
-            })
+        # Extract domain from Treg response
+        if 'output' in result and isinstance(result['output'], dict):
+            output = result['output']
+            domain = output.get('domain')
+            org_name = output.get('organization') or output.get('name') or company_name
+            
+            if domain:
+                results.append({
+                    'domain': domain.lower(),
+                    'name': org_name,
+                })
         
         return results
     
-    except HTTPError as e:
-        if e.code == 429:
-            print(f"  Hunter rate limit hit for '{company_name}'")
-        elif e.code == 403:
-            print(f"  Hunter API key invalid or quota exceeded")
-        else:
-            print(f"  Hunter HTTP error {e.code} for '{company_name}'")
-        return []
-    except (URLError, TimeoutError) as e:
-        print(f"  Hunter error for '{company_name}': {e}")
-        return []
     except Exception as e:
-        print(f"  Hunter unexpected error for '{company_name}': {e}")
         return []
 
 
@@ -475,10 +474,12 @@ def verify_candidate(
     
     # Call Jev classifier (this costs money!)
     if dry_run:
-        # In dry run, simulate Jev result
-        jev_result = {'contractor': 0.75, 'california': 0.75, 'identity': 0.75}
-        actual_cost = 0.0
-        print(f"  [DRY RUN] Would call Jev for {domain} (typical cost: ~${JEV_TYPICAL_COST:.5f})")
+        # In dry run, stop here and report what would happen
+        marker_type = 'license' if markers['license_match'] else \
+                      'phone' if markers['phone_match'] else \
+                      'city_ca' if markers['city_ca_match'] else 'unknown'
+        print(f"  [DRY RUN] Would call Jev with {marker_type} marker (typical cost: ~${JEV_TYPICAL_COST:.5f})")
+        return 'dry_run_pending', f'would_verify_{marker_type}_marker', None, 0.0
     else:
         jev_result, actual_cost = call_treg_jev(domain, page_texts, treg_api_key)
         if not jev_result:
@@ -490,29 +491,29 @@ def verify_candidate(
         if (jev_result['contractor'] >= thresholds['contractor'] and
             jev_result['california'] >= thresholds['california'] and
             jev_result['identity'] >= thresholds['identity']):
-            return 'confirmed', 'license_match+jev', jev_result, actual_cost
+            return 'jev_confirmed', 'license_match+jev', jev_result, actual_cost
         else:
-            return 'rejected', f"license_match_but_jev_below_threshold", jev_result, actual_cost
+            return 'jev_rejected', f"license_match_but_jev_below_threshold", jev_result, actual_cost
     
     elif markers['phone_match']:
         thresholds = VERIFICATION_THRESHOLDS['phone_match']
         if (jev_result['contractor'] >= thresholds['contractor'] and
             jev_result['california'] >= thresholds['california'] and
             jev_result['identity'] >= thresholds['identity']):
-            return 'confirmed', 'phone_match+jev', jev_result, actual_cost
+            return 'jev_confirmed', 'phone_match+jev', jev_result, actual_cost
         else:
-            return 'rejected', f"phone_match_but_jev_below_threshold", jev_result, actual_cost
+            return 'jev_rejected', f"phone_match_but_jev_below_threshold", jev_result, actual_cost
     
     elif markers['city_ca_match']:
         thresholds = VERIFICATION_THRESHOLDS['city_ca_match']
         if (jev_result['contractor'] >= thresholds['contractor'] and
             jev_result['california'] >= thresholds['california'] and
             jev_result['identity'] >= thresholds['identity']):
-            return 'confirmed', 'city_ca_match+jev', jev_result, actual_cost
+            return 'jev_confirmed', 'city_ca_match+jev', jev_result, actual_cost
         else:
-            return 'rejected', f"city_ca_but_jev_below_threshold", jev_result, actual_cost
+            return 'jev_rejected', f"city_ca_but_jev_below_threshold", jev_result, actual_cost
     
-    return 'rejected', 'no_matching_criteria', jev_result, actual_cost
+    return 'jev_rejected', 'no_matching_criteria', jev_result, actual_cost
 
 
 def discover_candidates(
@@ -520,7 +521,7 @@ def discover_candidates(
     limit: Optional[int] = None,
     dry_run: bool = False,
     refresh: bool = False,
-    hunter_api_key: Optional[str] = None,
+    treg_api_key: Optional[str] = None,
 ) -> Dict:
     """Phase 1: Discover domain candidates (free)
     
@@ -543,7 +544,7 @@ def discover_candidates(
     print(f"Mode: {'DRY RUN' if dry_run else 'LIVE'}")
     print(f"Limit: {limit if limit else 'None (process all CLEAR + 90-day)'}")
     print(f"Refresh: {'Yes (reprocess companies with candidates)' if refresh else 'No (skip companies with candidates)'}")
-    print(f"Hunter API key: {'Provided' if hunter_api_key else 'Not provided (using free tier)'}")
+    print(f"Hunter: {'SKIPPED (dry-run)' if dry_run else 'Treg free hunter.x.domain-finder'}")
     print()
     
     # Build query: CLEAR status + 90-day window + no domain
@@ -551,43 +552,54 @@ def discover_candidates(
     today = datetime.now(timezone.utc).date()
     ninety_days_out = today + timedelta(days=90)
     
-    query = supabase.table('cslb_companies').select(
-        'license_no, business_name, city, state'
-    ).eq('primary_status', 'CLEAR') \
-     .gte('expiration_date_iso', today.isoformat()) \
-     .lte('expiration_date_iso', ninety_days_out.isoformat()) \
-     .is_('company_domain', 'null')
-    
-    if limit:
-        query = query.limit(limit * 2)  # Fetch extra in case we skip some
-    
     print("Fetching CLEAR companies in 90-day window without domains...")
-    response = query.execute()
-    all_companies = response.data
     
-    print(f"Found {len(all_companies)} companies in query")
+    # Paginate to get exactly N eligible companies
+    companies = []
+    page_size = 1000
+    offset = 0
+    target_count = limit if limit else 999999
     
-    # If not refresh mode, filter out companies that already have candidates
-    if not refresh:
-        print("Checking for existing candidates...")
-        license_nos = [c['license_no'] for c in all_companies]
+    while len(companies) < target_count:
+        # Fetch a batch
+        query = supabase.table('cslb_companies').select(
+            'license_no, business_name, city, state'
+        ).eq('primary_status', 'CLEAR') \
+         .gte('expiration_date_iso', today.isoformat()) \
+         .lte('expiration_date_iso', ninety_days_out.isoformat()) \
+         .is_('company_domain', 'null') \
+         .order('license_no') \
+         .range(offset, offset + page_size - 1)
         
-        # Get companies that already have candidates
-        existing_response = supabase.table('codicen_domain_candidates').select('license_no') \
-            .in_('license_no', license_nos).execute()
+        response = query.execute()
+        batch = response.data
         
-        existing_license_nos = {row['license_no'] for row in existing_response.data}
+        if not batch:
+            break  # No more companies
         
-        companies = [c for c in all_companies if c['license_no'] not in existing_license_nos]
-        print(f"Skipping {len(existing_license_nos)} companies with existing candidates")
-    else:
-        companies = all_companies
+        # Filter out companies that already have candidates (unless refresh mode)
+        if not refresh:
+            license_nos = [c['license_no'] for c in batch]
+            existing_response = supabase.table('codicen_domain_candidates').select('license_no') \
+                .in_('license_no', license_nos).execute()
+            existing_license_nos = {row['license_no'] for row in existing_response.data}
+            eligible = [c for c in batch if c['license_no'] not in existing_license_nos]
+        else:
+            eligible = batch
+        
+        companies.extend(eligible)
+        offset += page_size
+        
+        # Stop if we have enough
+        if len(companies) >= target_count:
+            companies = companies[:target_count]
+            break
+        
+        # Stop if we got fewer than page_size (last page)
+        if len(batch) < page_size:
+            break
     
-    # Apply limit after filtering
-    if limit and len(companies) > limit:
-        companies = companies[:limit]
-    
-    print(f"Processing {len(companies)} companies\n")
+    print(f"Processing {len(companies)} eligible companies\n")
     
     # Track all candidates for bulk insert
     all_candidates = []
@@ -622,22 +634,23 @@ def discover_candidates(
             print(f"  Error querying Clearbit for {license_no}: {e}")
             stats['errors'] += 1
         
-        # Query Hunter
-        try:
-            hunter_results = query_hunter(
-                business_name, city, state, hunter_api_key, hunter_limiter
-            )
-            stats['hunter_calls'] += 1
-            
-            for result in hunter_results:
-                candidates.append({
-                    'source': 'hunter',
-                    'domain': result['domain'],
-                    'name': result['name'],
-                })
-        except Exception as e:
-            print(f"  Error querying Hunter for {license_no}: {e}")
-            stats['errors'] += 1
+        # Query Hunter (skip in dry-run to avoid spending credits)
+        if not dry_run:
+            try:
+                hunter_results = query_treg_hunter(
+                    business_name, city, state, treg_api_key or '', hunter_limiter
+                )
+                stats['hunter_calls'] += 1
+                
+                for result in hunter_results:
+                    candidates.append({
+                        'source': 'hunter',
+                        'domain': result['domain'],
+                        'name': result['name'],
+                    })
+            except Exception as e:
+                print(f"  Error querying Treg Hunter for {license_no}: {e}")
+                stats['errors'] += 1
         
         # Process candidates - save ALL to codicen_domain_candidates
         if candidates:
@@ -692,6 +705,56 @@ def discover_candidates(
     return stats
 
 
+def is_us_tld(domain: str) -> bool:
+    """Check if domain has a US TLD"""
+    # Prefer .com, .us, .org, .net
+    # Deprioritize non-US ccTLDs like .com.do, .com.co, .co.uk
+    domain_lower = domain.lower()
+    
+    # Non-US ccTLDs to deprioritize
+    non_us_patterns = [
+        '.com.do', '.com.co', '.co.uk', '.com.mx', '.com.br',
+        '.com.ar', '.co.nz', '.co.za', '.com.au', '.co.in',
+    ]
+    
+    for pattern in non_us_patterns:
+        if domain_lower.endswith(pattern):
+            return False
+    
+    # US TLDs
+    us_tlds = ['.com', '.org', '.net', '.us', '.edu', '.gov']
+    for tld in us_tlds:
+        if domain_lower.endswith(tld):
+            return True
+    
+    return False
+
+
+def calculate_verification_rank(candidate: Dict, company: Dict) -> float:
+    """Calculate ranking score for verification priority
+    
+    Returns score (higher = better) based on:
+    - Name similarity (0.0-1.0)
+    - .com bonus (+0.05)
+    - US TLD bonus (+0.05)
+    """
+    company_name = company.get('business_name', '')
+    candidate_name = candidate.get('candidate_name', '')
+    domain = candidate.get('candidate_domain', '')
+    
+    # Base similarity
+    similarity = calculate_name_similarity(company_name, candidate_name)
+    
+    # TLD bonuses
+    score = similarity
+    if domain.endswith('.com'):
+        score += 0.05
+    if is_us_tld(domain):
+        score += 0.05
+    
+    return score
+
+
 def verify_candidates(
     supabase: Client,
     limit: Optional[int] = None,
@@ -725,58 +788,80 @@ def verify_candidates(
     print(f"Jev reserve per call: ${JEV_RESERVE_PER_CALL:.5f} (released after settlement)")
     print()
     
-    # Fetch pending candidates with company data, ranked by score
     print("Fetching pending candidates...")
     
-    # Get candidates with their company data
-    candidates_query = supabase.table('codicen_domain_candidates').select(
-        'license_no, candidate_domain, candidate_name, name_match_score, source'
-    ).eq('verification_status', 'pending').order('name_match_score', desc=True)
+    # Paginate to get candidates with company data, ranked by this script's own scoring
+    all_candidates = []
+    page_size = 1000
+    offset = 0
     
-    if limit:
-        candidates_query = candidates_query.limit(limit)
+    while True:
+        # Fetch a batch of pending candidates
+        batch_response = supabase.table('codicen_domain_candidates').select(
+            'license_no, candidate_domain, candidate_name, name_match_score, source'
+        ).eq('verification_status', 'pending') \
+         .order('license_no') \
+         .range(offset, offset + page_size - 1).execute()
+        
+        batch = batch_response.data
+        if not batch:
+            break
+        
+        all_candidates.extend(batch)
+        offset += page_size
+        
+        if len(batch) < page_size:
+            break
     
-    candidates_response = candidates_query.execute()
-    candidates = candidates_response.data
+    print(f"Found {len(all_candidates)} pending candidates")
     
-    print(f"Found {len(candidates)} pending candidates")
-    
-    if not candidates:
+    if not all_candidates:
         print("No pending candidates to verify")
         return stats
     
-    # Fetch company data for these candidates
-    license_nos = list({c['license_no'] for c in candidates})
+    # Fetch company data
+    license_nos = list({c['license_no'] for c in all_candidates})
     companies_response = supabase.table('cslb_companies').select(
         'license_no, business_name, business_phone, city, state, company_domain'
     ).in_('license_no', license_nos).execute()
     
     companies_by_license = {c['license_no']: c for c in companies_response.data}
     
-    print(f"Processing candidates (max spend: ${max_spend_usd:.2f})...\n")
+    # Filter out candidates whose companies already have domains
+    eligible_candidates = []
+    for candidate in all_candidates:
+        company = companies_by_license.get(candidate['license_no'])
+        if company and not company.get('company_domain'):
+            eligible_candidates.append((candidate, company))
     
-    for idx, candidate in enumerate(candidates, 1):
+    print(f"Found {len(eligible_candidates)} eligible candidates (companies without domains)")
+    
+    # Rank using this script's own scoring
+    ranked = []
+    for candidate, company in eligible_candidates:
+        score = calculate_verification_rank(candidate, company)
+        ranked.append((score, candidate, company))
+    
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    
+    # Apply limit after ranking and filtering
+    if limit:
+        ranked = ranked[:limit]
+    
+    print(f"Processing top {len(ranked)} candidates (max spend: ${max_spend_usd:.2f})...\n")
+    
+    for idx, (score, candidate, company) in enumerate(ranked, 1):
         license_no = candidate['license_no']
         domain = candidate['candidate_domain']
         
-        company = companies_by_license.get(license_no)
-        if not company:
-            continue
-        
-        # Skip if company already has a confirmed domain
-        if company.get('company_domain'):
-            print(f"  Skipping {license_no}: already has confirmed domain")
-            continue
-        
         # Check spend limit before verification (reserve cost)
-        # Reserve money before the call, settle after
         reserved_cost = JEV_RESERVE_PER_CALL if not dry_run else 0.0
         if stats['spend_usd'] + reserved_cost > max_spend_usd:
             print(f"\nSpend limit reached: ${stats['spend_usd']:.5f} / ${max_spend_usd:.2f}")
             print(f"Processed {stats['candidates_processed']} candidates")
             break
         
-        print(f"[{idx}/{len(candidates)}] Verifying {domain} for {license_no}...")
+        print(f"[{idx}/{len(ranked)}] Verifying {domain} for {license_no} (score: {score:.3f})...")
         
         # Verify candidate
         try:
@@ -786,20 +871,19 @@ def verify_candidates(
             
             stats['candidates_processed'] += 1
             
-            if jev_result:
+            if jev_result or status == 'dry_run_pending':
                 stats['jev_calls'] += 1
                 if not dry_run:
-                    # Use actual settled cost from Treg response
                     stats['spend_usd'] += actual_cost
             
-            if status == 'confirmed':
+            if status == 'jev_confirmed':
                 stats['candidates_confirmed'] += 1
                 print(f"  ✓ CONFIRMED: {reason}")
                 
                 # Update candidate status
                 if not dry_run:
                     supabase.table('codicen_domain_candidates').update({
-                        'verification_status': 'confirmed',
+                        'verification_status': 'jev_confirmed',
                         'verification_evidence': {
                             'reason': reason,
                             'jev_scores': jev_result,
@@ -818,20 +902,24 @@ def verify_candidates(
                     if update_result.data:
                         stats['domains_written_to_cslb'] += 1
             
-            elif status == 'rejected':
+            elif status == 'jev_rejected':
                 stats['candidates_rejected'] += 1
                 print(f"  ✗ REJECTED: {reason}")
                 
                 # Update candidate status
                 if not dry_run:
                     supabase.table('codicen_domain_candidates').update({
-                        'verification_status': 'rejected',
+                        'verification_status': 'jev_rejected',
                         'verification_evidence': {
                             'reason': reason,
                             'jev_scores': jev_result if jev_result else {},
                             'verified_at': datetime.now(timezone.utc).isoformat(),
                         }
                     }).eq('license_no', license_no).eq('candidate_domain', domain).execute()
+            
+            elif status == 'dry_run_pending':
+                # In dry run, just report
+                print(f"  [DRY RUN] {reason}")
             
             else:  # error
                 stats['errors'] += 1
@@ -891,18 +979,13 @@ Examples:
     )
     parser.add_argument(
         '--supabase-key',
-        default=os.environ.get('SUPABASE_KEY'),
-        help='Supabase service role key (or set SUPABASE_KEY env var)',
-    )
-    parser.add_argument(
-        '--hunter-api-key',
-        default=os.environ.get('HUNTER_API_KEY'),
-        help='Hunter.io API key (optional, for discovery)',
+        default=os.environ.get('SUPABASE_KEY') or os.environ.get('SUPABASE_SERVICE_ROLE_KEY'),
+        help='Supabase service role key (or set SUPABASE_KEY/SUPABASE_SERVICE_ROLE_KEY)',
     )
     parser.add_argument(
         '--treg-api-key',
-        default=os.environ.get('TREG_API_KEY'),
-        help='Treg API key (required for --verify)',
+        default=os.environ.get('TREG_API_KEY') or os.environ.get('TREG_TOKEN'),
+        help='Treg API key (or set TREG_API_KEY/TREG_TOKEN)',
     )
     
     args = parser.parse_args()
@@ -947,7 +1030,7 @@ Examples:
                 limit=args.limit,
                 dry_run=args.dry_run,
                 refresh=args.refresh,
-                hunter_api_key=args.hunter_api_key,
+                treg_api_key=args.treg_api_key,
             )
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
