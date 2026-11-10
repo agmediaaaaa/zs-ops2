@@ -151,12 +151,13 @@ Must have at least one marker to proceed. Then calls Jev classifier and checks t
 - **Cost**: $0
 
 ### Verification (Paid)
-- **Jev classifier**: ~$0.02 per call
-- **Web scraping**: Free (HTTP requests)
+- **Jev classifier via Treg**: ~$0.00008 per check ($0.042/M input tokens)
+- **Web scraping**: $0 (using plain HTTP, not Crawl4AI)
+- **Reserve per request**: $0.0005 (held during call, released after settlement)
 - **Example costs**:
-  - 50 verifications: ~$1.00
-  - 250 verifications: ~$5.00
-  - 2,500 verifications: ~$50.00
+  - 1,000 verifications: ~$0.08
+  - 10,000 verifications: ~$0.80
+  - 60,000 verifications: ~$5.00 (a $5 cap allows tens of thousands of checks)
 
 ## Environment Variables
 

@@ -65,7 +65,14 @@ EXCLUDED_DOMAINS = {
 # Treg API configuration
 TREG_API_URL = "https://api.treg.ai/v2"
 JEV_ACTOR_ID = "typesafe/jev-1.13"
-JEV_COST_PER_CALL = 0.02  # Estimated cost per Jev classification
+
+# Real costs (measured):
+# - Jev via Treg: ~$0.00008 per check ($0.042/M input tokens)
+# - Crawl4AI page fetch: ~$0.00015 per page (or $0 if plain HTTP)
+# - $0.0005 reserve held per Jev request, settled after response
+JEV_RESERVE_PER_CALL = 0.0005  # Reserved before call, released after settlement
+JEV_TYPICAL_COST = 0.00008  # Typical settled cost per Jev check
+PAGE_FETCH_COST = 0.0  # Using plain HTTP (free), not Crawl4AI
 
 # Verification thresholds (calibrated on 200 companies)
 VERIFICATION_THRESHOLDS = {
@@ -372,10 +379,10 @@ def call_treg_jev(
     domain: str,
     page_texts: List[str],
     treg_api_key: str,
-) -> Optional[Dict]:
+) -> Tuple[Optional[Dict], float]:
     """Call Treg Jev classifier for contractor/california/identity probabilities
     
-    Returns: Dict with contractor, california, identity probabilities or None if fails
+    Returns: (probabilities_dict or None, actual_cost_usd)
     """
     combined_text = ' '.join(page_texts)[:10000]  # Limit to 10KB for API
     
@@ -399,21 +406,31 @@ def call_treg_jev(
         with urlopen(req, timeout=30) as response:
             result = json.loads(response.read().decode('utf-8'))
         
+        # Extract actual cost from Treg response metadata
+        actual_cost = 0.0
+        if 'metadata' in result and 'cost' in result['metadata']:
+            actual_cost = float(result['metadata']['cost'])
+        elif 'cost' in result:
+            actual_cost = float(result['cost'])
+        else:
+            # Fallback to typical cost if not provided
+            actual_cost = JEV_TYPICAL_COST
+        
         # Extract probabilities from result
-        # Assuming Jev returns: {contractor: 0.xx, california: 0.xx, identity: 0.xx}
         if 'output' in result and isinstance(result['output'], dict):
             output = result['output']
-            return {
+            probs = {
                 'contractor': output.get('contractor', 0.0),
                 'california': output.get('california', 0.0),
                 'identity': output.get('identity', 0.0),
             }
+            return probs, actual_cost
         
-        return None
+        return None, actual_cost
     
     except Exception as e:
         print(f"  Treg Jev error for {domain}: {e}")
-        return None
+        return None, 0.0
 
 
 def verify_candidate(
@@ -421,13 +438,14 @@ def verify_candidate(
     company: Dict,
     treg_api_key: str,
     dry_run: bool = False,
-) -> Tuple[str, str, Optional[Dict]]:
+) -> Tuple[str, str, Optional[Dict], float]:
     """Verify a domain candidate with web scraping and Jev classification
     
-    Returns: (status, reason, jev_result)
+    Returns: (status, reason, jev_result, actual_cost)
       status: 'confirmed', 'rejected', or 'error'
       reason: Human-readable explanation
       jev_result: Jev probabilities dict or None
+      actual_cost: Actual settled cost in USD
     """
     domain = candidate['candidate_domain']
     license_no = company.get('license_no', '')
@@ -437,7 +455,7 @@ def verify_candidate(
     # Fetch homepage
     homepage_text = fetch_webpage_content(domain)
     if not homepage_text:
-        return 'rejected', 'homepage_fetch_failed', None
+        return 'rejected', 'homepage_fetch_failed', None, 0.0
     
     page_texts = [homepage_text]
     
@@ -453,17 +471,18 @@ def verify_candidate(
     
     # Must have at least one identity marker
     if not any(markers.values()):
-        return 'rejected', 'no_identity_markers', None
+        return 'rejected', 'no_identity_markers', None, 0.0
     
     # Call Jev classifier (this costs money!)
     if dry_run:
         # In dry run, simulate Jev result
         jev_result = {'contractor': 0.75, 'california': 0.75, 'identity': 0.75}
-        print(f"  [DRY RUN] Would call Jev for {domain} (cost: ${JEV_COST_PER_CALL:.2f})")
+        actual_cost = 0.0
+        print(f"  [DRY RUN] Would call Jev for {domain} (typical cost: ~${JEV_TYPICAL_COST:.5f})")
     else:
-        jev_result = call_treg_jev(domain, page_texts, treg_api_key)
+        jev_result, actual_cost = call_treg_jev(domain, page_texts, treg_api_key)
         if not jev_result:
-            return 'error', 'jev_call_failed', None
+            return 'error', 'jev_call_failed', None, actual_cost
     
     # Check against thresholds based on which marker(s) matched
     if markers['license_match']:
@@ -471,29 +490,29 @@ def verify_candidate(
         if (jev_result['contractor'] >= thresholds['contractor'] and
             jev_result['california'] >= thresholds['california'] and
             jev_result['identity'] >= thresholds['identity']):
-            return 'confirmed', 'license_match+jev', jev_result
+            return 'confirmed', 'license_match+jev', jev_result, actual_cost
         else:
-            return 'rejected', f"license_match_but_jev_below_threshold", jev_result
+            return 'rejected', f"license_match_but_jev_below_threshold", jev_result, actual_cost
     
     elif markers['phone_match']:
         thresholds = VERIFICATION_THRESHOLDS['phone_match']
         if (jev_result['contractor'] >= thresholds['contractor'] and
             jev_result['california'] >= thresholds['california'] and
             jev_result['identity'] >= thresholds['identity']):
-            return 'confirmed', 'phone_match+jev', jev_result
+            return 'confirmed', 'phone_match+jev', jev_result, actual_cost
         else:
-            return 'rejected', f"phone_match_but_jev_below_threshold", jev_result
+            return 'rejected', f"phone_match_but_jev_below_threshold", jev_result, actual_cost
     
     elif markers['city_ca_match']:
         thresholds = VERIFICATION_THRESHOLDS['city_ca_match']
         if (jev_result['contractor'] >= thresholds['contractor'] and
             jev_result['california'] >= thresholds['california'] and
             jev_result['identity'] >= thresholds['identity']):
-            return 'confirmed', 'city_ca_match+jev', jev_result
+            return 'confirmed', 'city_ca_match+jev', jev_result, actual_cost
         else:
-            return 'rejected', f"city_ca_but_jev_below_threshold", jev_result
+            return 'rejected', f"city_ca_but_jev_below_threshold", jev_result, actual_cost
     
-    return 'rejected', 'no_matching_criteria', jev_result
+    return 'rejected', 'no_matching_criteria', jev_result, actual_cost
 
 
 def discover_candidates(
@@ -702,7 +721,8 @@ def verify_candidates(
     print(f"Mode: {'DRY RUN' if dry_run else 'LIVE'}")
     print(f"Max spend: ${max_spend_usd:.2f}")
     print(f"Limit: {limit if limit else 'None'}")
-    print(f"Jev cost per call: ${JEV_COST_PER_CALL:.2f}")
+    print(f"Jev typical cost: ~${JEV_TYPICAL_COST:.5f} per check")
+    print(f"Jev reserve per call: ${JEV_RESERVE_PER_CALL:.5f} (released after settlement)")
     print()
     
     # Fetch pending candidates with company data, ranked by score
@@ -748,10 +768,11 @@ def verify_candidates(
             print(f"  Skipping {license_no}: already has confirmed domain")
             continue
         
-        # Check spend limit before verification
-        estimated_cost = JEV_COST_PER_CALL
-        if stats['spend_usd'] + estimated_cost > max_spend_usd:
-            print(f"\nSpend limit reached: ${stats['spend_usd']:.2f} / ${max_spend_usd:.2f}")
+        # Check spend limit before verification (reserve cost)
+        # Reserve money before the call, settle after
+        reserved_cost = JEV_RESERVE_PER_CALL if not dry_run else 0.0
+        if stats['spend_usd'] + reserved_cost > max_spend_usd:
+            print(f"\nSpend limit reached: ${stats['spend_usd']:.5f} / ${max_spend_usd:.2f}")
             print(f"Processed {stats['candidates_processed']} candidates")
             break
         
@@ -759,7 +780,7 @@ def verify_candidates(
         
         # Verify candidate
         try:
-            status, reason, jev_result = verify_candidate(
+            status, reason, jev_result, actual_cost = verify_candidate(
                 candidate, company, treg_api_key or '', dry_run
             )
             
@@ -768,7 +789,8 @@ def verify_candidates(
             if jev_result:
                 stats['jev_calls'] += 1
                 if not dry_run:
-                    stats['spend_usd'] += JEV_COST_PER_CALL
+                    # Use actual settled cost from Treg response
+                    stats['spend_usd'] += actual_cost
             
             if status == 'confirmed':
                 stats['candidates_confirmed'] += 1
