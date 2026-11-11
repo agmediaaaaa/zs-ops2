@@ -1249,19 +1249,35 @@ async def main():
         
         print(f"Fetched {len(eligible)} companies from mock searches (skip-eligibility mode)")
     else:
-        today = datetime.now().date()
-        ninety_days = today + timedelta(days=90)
+        # Widen date range: 2026-11-10 to 2027-02-08 (Jessica's definition)
+        start_date = '2026-11-10'
+        end_date = '2027-02-08'
         
-        # Base eligible: CLEAR, expiring in 90 days, no domain yet, no dm_email
-        response = supabase.table('cslb_companies').select(
-            'license_no, business_name, business_phone, city, state, primary_principal_name'
-        ).is_('company_domain', 'null') \
-         .is_('dm_email', 'null') \
-         .eq('primary_status', 'CLEAR') \
-         .gte('expiration_date_iso', today.isoformat()) \
-         .lte('expiration_date_iso', ninety_days.isoformat()).execute()
+        # Base eligible: CLEAR, expiring in range, no domain, no dm_email
+        # Paginate to get all (no 1000 limit)
+        eligible = []
+        page_size = 1000
+        offset = 0
         
-        eligible = response.data
+        while True:
+            response = supabase.table('cslb_companies').select(
+                'license_no, business_name, business_phone, city, state, primary_principal_name'
+            ).is_('company_domain', 'null') \
+             .is_('dm_email', 'null') \
+             .eq('primary_status', 'CLEAR') \
+             .gte('expiration_date_iso', start_date) \
+             .lte('expiration_date_iso', end_date) \
+             .range(offset, offset + page_size - 1).execute()
+            
+            if not response.data:
+                break
+            
+            eligible.extend(response.data)
+            offset += page_size
+            
+            if len(response.data) < page_size:
+                break
+        
         base_count = len(eligible)
         
         # Filter out already web-searched
