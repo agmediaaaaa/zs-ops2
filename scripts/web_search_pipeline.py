@@ -410,35 +410,75 @@ class WebSearchPipeline:
                 self.log(f"  Writing {len(self.pending_attempts)} attempts...")
                 for i in range(0, len(self.pending_attempts), 500):
                     chunk = self.pending_attempts[i:i+500]
-                    self.supabase.table('codicen_enrichment_attempts').upsert(
-                        chunk, on_conflict='license_no,method,identifier,attempted_at'
-                    ).execute()
+                    for retry in range(3):
+                        try:
+                            self.supabase.table('codicen_enrichment_attempts').upsert(
+                                chunk, on_conflict='license_no,method,identifier,attempted_at'
+                            ).execute()
+                            break
+                        except Exception as e:
+                            if retry < 2:
+                                self.log(f"    Retry {retry+1}/3 after error: {str(e)[:80]}")
+                                await asyncio.sleep(2 ** retry)
+                            else:
+                                self.log(f"    Failed after 3 retries: {e}")
+                                raise
                 self.pending_attempts.clear()
             
             if self.pending_candidates:
                 self.log(f"  Writing {len(self.pending_candidates)} candidates...")
                 for i in range(0, len(self.pending_candidates), 500):
                     chunk = self.pending_candidates[i:i+500]
-                    self.supabase.table('codicen_domain_candidates').upsert(
-                        chunk, on_conflict='license_no,candidate_domain'
-                    ).execute()
+                    for retry in range(3):
+                        try:
+                            self.supabase.table('codicen_domain_candidates').upsert(
+                                chunk, on_conflict='license_no,candidate_domain'
+                            ).execute()
+                            break
+                        except Exception as e:
+                            if retry < 2:
+                                self.log(f"    Retry {retry+1}/3 after error: {str(e)[:80]}")
+                                await asyncio.sleep(2 ** retry)
+                            else:
+                                self.log(f"    Failed after 3 retries: {e}")
+                                raise
                 self.pending_candidates.clear()
             
             if self.pending_domain_updates:
                 self.log(f"  Writing {len(self.pending_domain_updates)} domain updates...")
                 for update in self.pending_domain_updates:
-                    self.supabase.table('cslb_companies').update(update['data']) \
-                        .eq('license_no', update['license_no']) \
-                        .is_('company_domain', 'null').execute()
+                    for retry in range(3):
+                        try:
+                            self.supabase.table('cslb_companies').update(update['data']) \
+                                .eq('license_no', update['license_no']) \
+                                .is_('company_domain', 'null').execute()
+                            break
+                        except Exception as e:
+                            if retry < 2:
+                                self.log(f"    Retry {retry+1}/3 after error: {str(e)[:80]}")
+                                await asyncio.sleep(2 ** retry)
+                            else:
+                                self.log(f"    Failed after 3 retries: {e}")
+                                raise
                 self.pending_domain_updates.clear()
             
             if self.pending_leads:
                 self.log(f"  Writing {len(self.pending_leads)} leads...")
                 for i in range(0, len(self.pending_leads), 500):
                     chunk = self.pending_leads[i:i+500]
-                    self.supabase.table('pipeline_leads').upsert(
-                        chunk, on_conflict='email,batch_id'
-                    ).execute()
+                    for retry in range(3):
+                        try:
+                            self.supabase.table('pipeline_leads').upsert(
+                                chunk, on_conflict='email,batch_id'
+                            ).execute()
+                            break
+                        except Exception as e:
+                            if retry < 2:
+                                self.log(f"    Retry {retry+1}/3 after error: {str(e)[:80]}")
+                                await asyncio.sleep(2 ** retry)
+                            else:
+                                self.log(f"    Failed after 3 retries: {e}")
+                                raise
                 self.pending_leads.clear()
             
             if self.pending_list_members:
