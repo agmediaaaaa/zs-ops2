@@ -1,0 +1,61 @@
+[2026-11-11T08:25:51+00:00] Backfill starting (LIVE)
+[2026-11-11T08:25:51+00:00] Supabase URL: https://npkdhahdvilcctjwzdlf.supabase.co
+[2026-11-11T08:25:51+00:00] Backfilling Jev attempts from codicen_domain_candidates...
+[2026-11-11T08:26:22+00:00]   Inserting 34462 Jev attempts...
+[2026-11-11T08:27:30+00:00]   Found 34462 Jev attempts from domain candidates
+[2026-11-11T08:27:30+00:00] Backfilling confirmed domains from cslb_companies...
+[2026-11-11T08:27:34+00:00]   Inserting 4742 confirmed domain attempts...
+[2026-11-11T08:27:38+00:00]   Found 4742 confirmed domains from cslb_companies
+[2026-11-11T08:27:38+00:00] Backfilling from 3 outcome files...
+[2026-11-11T08:27:38+00:00]   Reading outcomes_6a30.jsonl...
+[2026-11-11T08:27:38+00:00]   Reading outcomes_6e5f.jsonl...
+[2026-11-11T08:27:38+00:00]   Reading outcomes_b20b.jsonl...
+[2026-11-11T08:27:38+00:00]   Inserting 33652 attempts from outcome files...
+[2026-11-11T08:28:07+00:00]   Found 33652 Jev, 0 crawl attempts from outcome files
+[2026-11-11T08:28:07+00:00] Backfilling web_search attempts from searches_09e6.jsonl...
+[2026-11-11T08:28:07+00:00]   Inserting 429 web_search attempts...
+[2026-11-11T08:28:07+00:00]   Found 429 web_search attempts from searches file
+[2026-11-11T08:28:07+00:00] Backfilling crawl attempts from 2 report files...
+[2026-11-11T08:28:07+00:00]   FINAL_REPORT_8c4f.json: 49 crawl attempts
+[2026-11-11T08:28:07+00:00]   FINAL_REPORT_e489.json: 8 crawl attempts
+[2026-11-11T08:28:07+00:00]   Note: Crawl attempts need detailed logs to backfill accurately
+[2026-11-11T08:28:07+00:00]   Total crawl4ai_domains from reports: 57
+[2026-11-11T08:28:07+00:00]   Skipping crawl backfill (would need crawl-specific outcome files)
+[2026-11-11T08:28:07+00:00] Backfilling email attempts from pipeline_leads batches: codicen-window-1111, codicen-search-pilot-1111...
+[2026-11-11T08:28:08+00:00]   Inserting 230 email attempts...
+[2026-11-11T08:28:09+00:00]   Found 230 email attempts from pipeline_leads
+[2026-11-11T08:28:09+00:00] 
+======================================================================
+[2026-11-11T08:28:09+00:00] BACKFILL SUMMARY
+[2026-11-11T08:28:09+00:00] ======================================================================
+[2026-11-11T08:28:09+00:00] Jev attempts from candidates:        34,462
+[2026-11-11T08:28:09+00:00] Jev attempts from confirmed domains: 4,742
+[2026-11-11T08:28:09+00:00] Jev attempts from outcome files:     33,652
+[2026-11-11T08:28:09+00:00] Crawl attempts from outcome files:   0
+[2026-11-11T08:28:09+00:00] Web search from searches.jsonl:      429
+[2026-11-11T08:28:09+00:00] Email attempts from pipeline_leads:  230
+[2026-11-11T08:28:09+00:00] 
+Total attempts: 73,515
+[2026-11-11T08:28:09+00:00] 
+Backfill complete
+[2026-11-11T08:28:09+00:00] 
+======================================================================
+[2026-11-11T08:28:09+00:00] ACTUAL COUNTS BY METHOD (from database)
+[2026-11-11T08:28:09+00:00] ======================================================================
+[2026-11-11T08:28:09+00:00] candidate_fetch     : 0
+[2026-11-11T08:28:09+00:00] jev                 : 72,847
+[2026-11-11T08:28:10+00:00] web_search          : 429
+[2026-11-11T08:28:10+00:00] crawl               : 0
+[2026-11-11T08:28:10+00:00] email_verify        : 230
+[2026-11-11T08:28:10+00:00] TOTAL               : 73,506
+[2026-11-11T08:28:10+00:00] 
+======================================================================
+[2026-11-11T08:28:10+00:00] ELIGIBLE FOR WEB SEARCH
+[2026-11-11T08:28:10+00:00] ======================================================================
+Traceback (most recent call last):
+  File "/agent/repos/zs-ops2/scripts/backfill_enrichment_attempts.py", line 548, in <module>
+    main()
+  File "/agent/repos/zs-ops2/scripts/backfill_enrichment_attempts.py", line 530, in main
+    .lte('expiration_date_iso', (datetime.now().date() + timedelta(days=90)).isoformat()) \
+                                                         ^^^^^^^^^
+NameError: name 'timedelta' is not defined
