@@ -251,7 +251,7 @@ class WebSearchPipeline:
         
         # Load existing pipeline_leads emails (30 days)
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        response = self.supabase.table('pipeline_leads').select('email').gte('verified_at', cutoff).execute()
+        response = self.supabase.table('pipeline_leads').select('email').gte('updated_at', cutoff).execute()
         self.pipeline_leads_emails = {row['email'].lower() for row in response.data if row.get('email')}
         self.log(f"Loaded {len(self.pipeline_leads_emails)} existing pipeline_leads emails (30d)")
         self.log(f"Loaded {len(self.suppressed_emails)} suppressed emails")
@@ -775,20 +775,31 @@ class WebSearchPipeline:
         
         quality = check_email_quality(email, company_name, domain)
         
+        # Build raw metadata with license_no for tracking
+        raw_metadata = person.get('source_row', {})
+        raw_metadata['license_no'] = person['license_no']
+        raw_metadata['quality_status'] = quality
+        
         lead = {
-            'license_no': person['license_no'],
-            'company_name': company_name,
-            'domain': domain,
+            'batch_id': self.batch_id,
+            'source_run': f'{self.batch_id} > web_search',
+            'client': 'ZS',
+            'campaign_id': 'codicen',
             'first_name': person.get('first_name', ''),
             'last_name': person.get('last_name', ''),
             'title': person.get('title', 'CSLB Principal'),
             'email': email,
-            'mv_status': mv_status,
-            'quality_status': quality,
+            'company_name': company_name,
+            'website': f'https://{domain}' if domain else None,
+            'company_domain': domain,
+            'country': 'US',
+            'mv_status': mv_status.upper(),
             'email_source': f'{self.batch_id} > web_search',
-            'verified_at': datetime.now(timezone.utc).isoformat(),
-            'batch_id': self.batch_id,
-            'raw': person.get('source_row', {}),
+            'already_in_lead_db': False,
+            'plusvibe_excluded': False,
+            'plusvibe_ready': (quality == 'list_quality'),
+            'handoff_status': 'ready' if quality == 'list_quality' else 'needs_review',
+            'raw': raw_metadata,
         }
         
         async with self.lock:
