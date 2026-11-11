@@ -485,9 +485,8 @@ class WebSearchPipeline:
                     chunk = self.pending_leads[i:i+500]
                     for retry in range(3):
                         try:
-                            self.supabase.table('pipeline_leads').upsert(
-                                chunk, on_conflict='email'
-                            ).execute()
+                            # Use insert since we already de-dupe with pipeline_leads_emails
+                            self.supabase.table('pipeline_leads').insert(chunk).execute()
                             break
                         except Exception as e:
                             if retry < 2:
