@@ -41,7 +41,8 @@ except ImportError:
     sys.exit(1)
 
 DEFAULT_SUPABASE_URL = 'https://npkdhahdvilcctjwzdlf.supabase.co'
-DEFAULT_TREG_URL = 'https://api.treg.dev/call'
+DEFAULT_TREG_BASE = 'https://treg.to'
+TREG_ORG_ID = '33605'
 
 # Costs (microdollars) - pilot settled rates
 COSTS = {
@@ -205,7 +206,7 @@ class WebSearchPipeline:
     ):
         self.supabase = supabase
         self.treg_token = treg_token
-        self.treg_url = DEFAULT_TREG_URL
+        self.treg_base = DEFAULT_TREG_BASE
         self.max_spend_micro = max_spend_micro
         self.dry_run = dry_run
         self.batch_id = batch_id or f'codicen-cloud-{datetime.now(timezone.utc).strftime("%Y%m%d")}'
@@ -245,6 +246,17 @@ class WebSearchPipeline:
     def log(self, msg: str):
         elapsed = time.time() - self.start_time
         print(f'[{elapsed:7.1f}s] {msg}', flush=True)
+    
+    async def get_treg_balance(self) -> Dict:
+        """Get Treg balance (free call)"""
+        url = f"{self.treg_base}/orgs/{TREG_ORG_ID}/balance"
+        headers = {
+            'X-Treg-Token': self.treg_token,
+            'Accept': 'application/json',
+        }
+        response = await self.http_client.get(url, headers=headers, timeout=30.0)
+        response.raise_for_status()
+        return response.json()
     
     async def init(self):
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUTS['treg']))
@@ -361,26 +373,50 @@ class WebSearchPipeline:
                     self.log(f"    Would add {len(chunk)} to list {self.list_id}")
                 self.pending_list_members.clear()
     
-    async def call_treg(self, endpoint: str, body: Dict = None, query: Dict = None, idem_key: str = None) -> Dict:
-        """Call Treg with idempotency"""
-        request = {
-            'endpoint_id': endpoint,
-            'idempotency_key': idem_key or f"{self.batch_id}-{endpoint}-{hashlib.sha256(json.dumps(body or query).encode()).hexdigest()[:16]}",
-        }
-        if body:
-            request['body'] = body
-        if query:
-            request['query'] = query
+    async def call_treg(self, endpoint: str, body: Dict = None, query: Dict = None, idem_key: str = None, max_cost_usd: float = None) -> Dict:
+        """Call Treg API with correct format
         
-        response = await self.http_client.post(
-            self.treg_url,
-            json=request,
-            headers={'Authorization': f'Bearer {self.treg_token}'},
-            timeout=TIMEOUTS['treg'],
-        )
+        GET https://treg.to/call/<endpoint>?<query_params> for query-based
+        POST https://treg.to/call/<endpoint> with JSON body for body-based
+        """
+        idem_key = idem_key or f"{self.batch_id}-{endpoint}-{hashlib.sha256(json.dumps(body or query or {}).encode()).hexdigest()[:16]}"
+        
+        headers = {
+            'X-Treg-Token': self.treg_token,
+            'Accept': 'application/json',
+            'Idempotency-Key': idem_key,
+            'Cache-Control': 'no-cache',
+        }
+        
+        if max_cost_usd:
+            headers['X-Treg-Route-Max-Cost'] = str(max_cost_usd)
+        
+        url = f"{self.treg_base}/call/{endpoint}"
+        
+        if query:
+            # GET with query params
+            response = await self.http_client.get(
+                url,
+                params=query,
+                headers=headers,
+                timeout=TIMEOUTS['treg'],
+            )
+        else:
+            # POST with body
+            response = await self.http_client.post(
+                url,
+                json=body or {},
+                headers=headers,
+                timeout=TIMEOUTS['treg'],
+            )
+        
         response.raise_for_status()
         result = response.json()
-        return result.get('output', {})
+        
+        # Treg returns the body directly or in a wrapper
+        if isinstance(result, dict) and 'body' in result:
+            return result['body']
+        return result
     
     async def search_company(self, company: Dict) -> Tuple[List[str], List[str]]:
         """Search for company domains and extract snippet emails
@@ -417,8 +453,15 @@ class WebSearchPipeline:
         await self.record_attempt('web_search', license_no, None, 'completed', COSTS['anyapi.google.serp.organic'])
         
         try:
-            result = await self.call_treg('anyapi.google.serp.organic', body=body, idem_key=f"{self.batch_id}-search-{license_no}")
-            raw_results = result.get('results', []) or result.get('organic', [])
+            result = await self.call_treg(
+                'anyapi.google.serp.organic',
+                body=body,
+                idem_key=f"{self.batch_id}-search-{license_no}",
+                max_cost_usd=COSTS['anyapi.google.serp.organic'] / 1e6
+            )
+            # Treg returns output wrapper or direct results
+            output = result.get('output', result)
+            raw_results = output.get('results', []) or output.get('organic', [])
             
             domains = []
             emails = []
@@ -595,7 +638,12 @@ class WebSearchPipeline:
             return confirmed, probs
         
         try:
-            result = await self.call_treg('openrouter.ai-judge.decide', body=body, idem_key=f"{self.batch_id}-jev-{domain}")
+            result = await self.call_treg(
+                'openrouter.ai-judge.decide',
+                body=body,
+                idem_key=f"{self.batch_id}-jev-{domain}",
+                max_cost_usd=COSTS['openrouter.ai-judge.decide'] / 1e6
+            )
             
             if not str(result.get('model', '')).startswith('typesafe/jev-1.13'):
                 raise ValueError('Unexpected model ' + str(result.get('model')))
@@ -647,7 +695,12 @@ class WebSearchPipeline:
         
         try:
             body = {'urls': urls, 'format': 'md', 'proxy': 'none'}
-            result = await self.call_treg('crawl4ai.web.extract.batch', body=body, idem_key=f"{self.batch_id}-crawl-{domain}")
+            result = await self.call_treg(
+                'crawl4ai.web.extract.batch',
+                body=body,
+                idem_key=f"{self.batch_id}-crawl-{domain}",
+                max_cost_usd=COSTS['crawl4ai.web.extract.batch'] / 1e6
+            )
             await self.record_spend('crawl4ai.web.extract.batch')
             
             results = result if isinstance(result, list) else (result or {}).get('results') or (result or {}).get('data') or []
@@ -693,7 +746,11 @@ class WebSearchPipeline:
                 return 'invalid'
         
         try:
-            result = await self.call_treg('millionverifier.people.email.verify', query={'email': email, 'timeout': 10})
+            result = await self.call_treg(
+                'millionverifier.people.email.verify',
+                query={'email': email, 'timeout': '10'},
+                max_cost_usd=COSTS['millionverifier.people.email.verify'] / 1e6
+            )
             await self.record_spend('millionverifier.people.email.verify')
             status = result.get('result', 'unknown')
             
@@ -721,7 +778,11 @@ class WebSearchPipeline:
             return 'pending'
         
         try:
-            result = await self.call_treg('bounceban.people.email.verify', query={'email': email})
+            result = await self.call_treg(
+                'bounceban.people.email.verify',
+                query={'email': email},
+                max_cost_usd=COSTS['bounceban.people.email.verify'] / 1e6
+            )
             await self.record_spend('bounceban.people.email.verify')
             bb_id = result.get('id')
             status = result.get('result') or result.get('status')
@@ -771,7 +832,10 @@ class WebSearchPipeline:
                         await self.save_lead(person, email, 'bounceban_deliverable')
                         continue
                     
-                    result = await self.call_treg('bounceban.people.email.verify.status', query={'id': bb_id})
+                    result = await self.call_treg(
+                        'bounceban.people.email.verify.status',
+                        query={'id': bb_id}
+                    )
                     status = result.get('result') or result.get('status')
                     
                     license_no = person.get('license_no', 'unknown')
