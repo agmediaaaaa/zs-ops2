@@ -1007,7 +1007,7 @@ async def main():
     parser.add_argument('--suppression-file', help='Path to suppression JSON')
     parser.add_argument('--skip-eligibility', action='store_true', help='Skip eligibility filters (use any companies from mock-searches)')
     parser.add_argument('--supabase-url', default=os.environ.get('SUPABASE_URL', DEFAULT_SUPABASE_URL))
-    parser.add_argument('--supabase-key', default=os.environ.get('SUPABASE_KEY') or os.environ.get('SUPABASE_SERVICE_ROLE_KEY'))
+    parser.add_argument('--supabase-key', default=os.environ.get('SUPABASE_SERVICE_ROLE_KEY') or os.environ.get('SUPABASE_KEY'))
     parser.add_argument('--treg-token', default=os.environ.get('treg'))
     parser.add_argument('--batch-id', help='Batch ID')
     
@@ -1039,16 +1039,22 @@ async def main():
         # For testing: use license_nos from mock searches
         print("Using --skip-eligibility: fetching companies from mock searches...")
         license_nos = list(mock_searches.keys())
+        print(f"  Loaded {len(mock_searches)} mock searches")
+        print(f"  Sample license_nos: {license_nos[:5]}")
+        
         if args.limit:
             license_nos = license_nos[:args.limit]
+            print(f"  Limited to {len(license_nos)} license_nos")
         
         # Fetch company details for these licenses
         eligible = []
         for i in range(0, len(license_nos), 100):
             chunk = license_nos[i:i+100]
+            print(f"  Fetching chunk {i//100 + 1}: {len(chunk)} licenses...")
             response = supabase.table('cslb_companies').select(
                 'license_no, business_name, business_phone, city, state, primary_principal_name'
             ).in_('license_no', chunk).execute()
+            print(f"    Got {len(response.data)} companies")
             eligible.extend(response.data)
         
         print(f"Fetched {len(eligible)} companies from mock searches (skip-eligibility mode)")
