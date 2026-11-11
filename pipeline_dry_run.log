@@ -1,0 +1,23 @@
+Fetching eligible companies...
+Found 484 eligible companies (not yet web-searched)
+[    0.0s] Starting web_search pipeline for 484 companies
+[    0.0s] Mode: DRY RUN
+[    0.0s] Max spend: $10.00
+[    0.0s] Batch ID: codicen-cloud-20261111
+[    0.0s] [DRY RUN] Would write 484 attempts, 0 candidates, 0 domain updates, 0 leads
+[    0.0s] 
+======================================================================
+[    0.0s] PIPELINE COMPLETE
+[    0.0s] ======================================================================
+[    0.0s] Companies processed:      484
+[    0.0s] Companies searched:       484
+[    0.0s] Companies with domains:   0
+[    0.0s] Fetched:                  0
+[    0.0s] Marker positive:          0
+[    0.0s] Jev calls:                0
+[    0.0s] Domains confirmed:        0
+[    0.0s] Elapsed: 0.0s
+[    0.0s] Throughput: 1736341.0 companies/min
+[    0.0s] 
+DRY RUN spend would be: $0.2275
+[    0.0s] [DRY RUN] Would write 0 attempts, 0 candidates, 0 domain updates, 0 leads
