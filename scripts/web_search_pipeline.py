@@ -54,6 +54,15 @@ COSTS = {
     'bounceban.people.email.verify.status': 0,
 }
 
+# Route max cost ceilings (for X-Treg-Route-Max-Cost header)
+ROUTE_MAX_COSTS = {
+    'anyapi.google.serp.organic': 900,  # $0.0009 ceiling
+    'openrouter.ai-judge.decide': 500,  # $0.0005 ceiling
+    'crawl4ai.web.extract.batch': 150,  # $0.00015 per page
+    'millionverifier.people.email.verify': 1780,
+    'bounceban.people.email.verify': 4000,
+}
+
 # Concurrency
 CONCURRENCY = {
     'search': 30,
@@ -209,7 +218,9 @@ class WebSearchPipeline:
         self.treg_base = DEFAULT_TREG_BASE
         self.max_spend_micro = max_spend_micro
         self.dry_run = dry_run
+        # Unique idempotency prefix per run (append 'b' to avoid replay of failed keys)
         self.batch_id = batch_id or f'codicen-cloud-{datetime.now(timezone.utc).strftime("%Y%m%d")}'
+        self.idem_prefix = f"{self.batch_id.replace('codicen', 'codicen-ws')}-{hashlib.sha256(str(time.time()).encode()).hexdigest()[:8]}"
         self.list_id = list_id
         self.mock_searches = mock_searches or {}  # license_no -> search result
         self.mock_mv = mock_mv or dry_run
@@ -235,11 +246,13 @@ class WebSearchPipeline:
         self.pipeline_leads_emails = set()  # Existing in pipeline_leads (30 days)
         self.bb_pending = []  # (person, email, bb_id, queued_time)
         
-        # Load suppression
+        # Load suppression (PlusVibe format: {"em": ["email1", "email2", ...]})
         if suppression_file and Path(suppression_file).exists():
             with open(suppression_file) as f:
                 data = json.load(f)
-                self.suppressed_emails = {str(e).lower() for e in data.get('emails', [])}
+                # Try both 'emails' and 'em' keys
+                emails = data.get('em') or data.get('emails') or []
+                self.suppressed_emails = {str(e).lower() for e in emails if e}
         
         self.start_time = time.time()
     
@@ -373,50 +386,56 @@ class WebSearchPipeline:
                     self.log(f"    Would add {len(chunk)} to list {self.list_id}")
                 self.pending_list_members.clear()
     
-    async def call_treg(self, endpoint: str, body: Dict = None, query: Dict = None, idem_key: str = None, max_cost_usd: float = None) -> Dict:
+    async def call_treg(self, endpoint: str, body: Dict = None, query: Dict = None, idem_key: str = None) -> Tuple[Dict, int]:
         """Call Treg API with correct format
         
-        GET https://treg.to/call/<endpoint>?<query_params> for query-based
-        POST https://treg.to/call/<endpoint> with JSON body for body-based
+        Always POST to https://treg.to/call/<endpoint> with JSON body
+        For query-based calls, params go in body
+        Returns: (result_dict, cost_micro)
         """
         idem_key = idem_key or f"{self.batch_id}-{endpoint}-{hashlib.sha256(json.dumps(body or query or {}).encode()).hexdigest()[:16]}"
+        
+        # Get route max cost ceiling
+        route_max_micro = ROUTE_MAX_COSTS.get(endpoint, COSTS.get(endpoint, 0))
         
         headers = {
             'X-Treg-Token': self.treg_token,
             'Accept': 'application/json',
+            'Content-Type': 'application/json',
             'Idempotency-Key': idem_key,
             'Cache-Control': 'no-cache',
+            'X-Treg-Route-Max-Cost': str(route_max_micro / 1e6),
         }
-        
-        if max_cost_usd:
-            headers['X-Treg-Route-Max-Cost'] = str(max_cost_usd)
         
         url = f"{self.treg_base}/call/{endpoint}"
         
-        if query:
-            # GET with query params
-            response = await self.http_client.get(
-                url,
-                params=query,
-                headers=headers,
-                timeout=TIMEOUTS['treg'],
-            )
-        else:
-            # POST with body
-            response = await self.http_client.post(
-                url,
-                json=body or {},
-                headers=headers,
-                timeout=TIMEOUTS['treg'],
-            )
+        # Always POST with JSON body (query params go in body too)
+        payload = body or query or {}
+        
+        response = await self.http_client.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=TIMEOUTS['treg'],
+        )
+        
+        # Read actual cost from response headers
+        cost_micro = 0
+        if response.status_code == 200:
+            cost_header = response.headers.get('X-Treg-Original-Cost-Micro') or response.headers.get('X-Treg-Cost-Micro')
+            if cost_header:
+                try:
+                    cost_micro = int(cost_header)
+                except (ValueError, TypeError):
+                    cost_micro = COSTS.get(endpoint, 0)
         
         response.raise_for_status()
         result = response.json()
         
         # Treg returns the body directly or in a wrapper
         if isinstance(result, dict) and 'body' in result:
-            return result['body']
-        return result
+            return result['body'], cost_micro
+        return result, cost_micro
     
     async def search_company(self, company: Dict) -> Tuple[List[str], List[str]]:
         """Search for company domains and extract snippet emails
@@ -449,16 +468,16 @@ class WebSearchPipeline:
             'location': f'{city}, California, United States' if city else 'California, United States',
         }
         
-        await self.record_spend('anyapi.google.serp.organic')
-        await self.record_attempt('web_search', license_no, None, 'completed', COSTS['anyapi.google.serp.organic'])
-        
         try:
-            result = await self.call_treg(
+            result, cost_micro = await self.call_treg(
                 'anyapi.google.serp.organic',
                 body=body,
-                idem_key=f"{self.batch_id}-search-{license_no}",
-                max_cost_usd=COSTS['anyapi.google.serp.organic'] / 1e6
+                idem_key=f"{self.idem_prefix}-search-{license_no}"
             )
+            
+            await self.record_spend('anyapi.google.serp.organic', cost_micro)
+            await self.record_attempt('web_search', license_no, None, 'completed', cost_micro)
+            
             # Treg returns output wrapper or direct results
             output = result.get('output', result)
             raw_results = output.get('results', []) or output.get('organic', [])
@@ -608,8 +627,6 @@ class WebSearchPipeline:
             'questions': questions,
         }
         
-        await self.record_spend('openrouter.ai-judge.decide')
-        
         # Mock Jev in dry-run
         if self.dry_run:
             import random
@@ -638,12 +655,13 @@ class WebSearchPipeline:
             return confirmed, probs
         
         try:
-            result = await self.call_treg(
+            result, cost_micro = await self.call_treg(
                 'openrouter.ai-judge.decide',
                 body=body,
-                idem_key=f"{self.batch_id}-jev-{domain}",
-                max_cost_usd=COSTS['openrouter.ai-judge.decide'] / 1e6
+                idem_key=f"{self.idem_prefix}-jev-{domain}"
             )
+            
+            await self.record_spend('openrouter.ai-judge.decide', cost_micro)
             
             if not str(result.get('model', '')).startswith('typesafe/jev-1.13'):
                 raise ValueError('Unexpected model ' + str(result.get('model')))
@@ -695,13 +713,12 @@ class WebSearchPipeline:
         
         try:
             body = {'urls': urls, 'format': 'md', 'proxy': 'none'}
-            result = await self.call_treg(
+            result, cost_micro = await self.call_treg(
                 'crawl4ai.web.extract.batch',
                 body=body,
-                idem_key=f"{self.batch_id}-crawl-{domain}",
-                max_cost_usd=COSTS['crawl4ai.web.extract.batch'] / 1e6
+                idem_key=f"{self.idem_prefix}-crawl-{domain}"
             )
-            await self.record_spend('crawl4ai.web.extract.batch')
+            await self.record_spend('crawl4ai.web.extract.batch', cost_micro)
             
             results = result if isinstance(result, list) else (result or {}).get('results') or (result or {}).get('data') or []
             
@@ -746,15 +763,14 @@ class WebSearchPipeline:
                 return 'invalid'
         
         try:
-            result = await self.call_treg(
+            result, cost_micro = await self.call_treg(
                 'millionverifier.people.email.verify',
-                query={'email': email, 'timeout': '10'},
-                max_cost_usd=COSTS['millionverifier.people.email.verify'] / 1e6
+                query={'email': email, 'timeout': '10'}
             )
-            await self.record_spend('millionverifier.people.email.verify')
+            await self.record_spend('millionverifier.people.email.verify', cost_micro)
             status = result.get('result', 'unknown')
             
-            await self.record_attempt('email_verify', company['license_no'], email, f'mv_{status}', COSTS['millionverifier.people.email.verify'])
+            await self.record_attempt('email_verify', company['license_no'], email, f'mv_{status}', cost_micro)
             
             self.stats[f'mv_{status}'] += 1
             return status
@@ -778,16 +794,15 @@ class WebSearchPipeline:
             return 'pending'
         
         try:
-            result = await self.call_treg(
+            result, cost_micro = await self.call_treg(
                 'bounceban.people.email.verify',
-                query={'email': email},
-                max_cost_usd=COSTS['bounceban.people.email.verify'] / 1e6
+                query={'email': email}
             )
-            await self.record_spend('bounceban.people.email.verify')
+            await self.record_spend('bounceban.people.email.verify', cost_micro)
             bb_id = result.get('id')
             status = result.get('result') or result.get('status')
             
-            await self.record_attempt('email_verify', company['license_no'], email, f'bb_dispatch_{status}', COSTS['bounceban.people.email.verify'])
+            await self.record_attempt('email_verify', company['license_no'], email, f'bb_dispatch_{status}', cost_micro)
             
             if status == 'deliverable':
                 self.stats['bb_deliverable_immediate'] += 1
@@ -832,10 +847,11 @@ class WebSearchPipeline:
                         await self.save_lead(person, email, 'bounceban_deliverable')
                         continue
                     
-                    result = await self.call_treg(
+                    result, cost_micro = await self.call_treg(
                         'bounceban.people.email.verify.status',
                         query={'id': bb_id}
                     )
+                    # Status polling is free (cost_micro should be 0)
                     status = result.get('result') or result.get('status')
                     
                     license_no = person.get('license_no', 'unknown')
