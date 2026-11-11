@@ -338,10 +338,27 @@ class WebSearchPipeline:
     async def init(self):
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUTS['treg']))
         
-        # Load existing pipeline_leads emails (30 days)
+        # Load existing pipeline_leads emails (30 days) - paginate to get all
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        response = self.supabase.table('pipeline_leads').select('email').gte('updated_at', cutoff).execute()
-        self.pipeline_leads_emails = {row['email'].lower() for row in response.data if row.get('email')}
+        self.pipeline_leads_emails = set()
+        offset = 0
+        page_size = 1000
+        while True:
+            response = self.supabase.table('pipeline_leads').select('email') \
+                .gte('updated_at', cutoff) \
+                .range(offset, offset + page_size - 1).execute()
+            
+            if not response.data:
+                break
+            
+            for row in response.data:
+                if row.get('email'):
+                    self.pipeline_leads_emails.add(row['email'].lower())
+            
+            offset += page_size
+            if len(response.data) < page_size:
+                break
+        
         self.log(f"Loaded {len(self.pipeline_leads_emails)} existing pipeline_leads emails (30d)")
         self.log(f"Loaded {len(self.suppressed_emails)} suppressed emails")
     
@@ -490,13 +507,15 @@ class WebSearchPipeline:
                     self.log(f"    Would add {len(chunk)} to list {self.list_id}")
                 self.pending_list_members.clear()
     
-    async def call_treg(self, endpoint: str, body: Dict = None, query: Dict = None, idem_key: str = None) -> Tuple[Dict, int]:
+    async def call_treg(self, endpoint: str, body: Dict = None, query: Dict = None, idem_key: str = None, method: str = 'POST') -> Tuple[Dict, int]:
         """Call Treg API with correct format
         
-        Always POST to https://treg.to/call/<endpoint> with JSON body
-        For query-based calls, params go in body
+        POST to https://treg.to/call/<endpoint> with JSON body (for searches, crawl)
+        GET to https://treg.to/call/<endpoint>?params (for MV, BB)
         Returns: (result_dict, cost_micro)
         """
+        import urllib.parse
+        
         idem_key = idem_key or f"{self.batch_id}-{endpoint}-{hashlib.sha256(json.dumps(body or query or {}).encode()).hexdigest()[:16]}"
         
         # Get route max cost ceiling
@@ -505,7 +524,6 @@ class WebSearchPipeline:
         headers = {
             'X-Treg-Token': self.treg_token,
             'Accept': 'application/json',
-            'Content-Type': 'application/json',
             'Idempotency-Key': idem_key,
             'Cache-Control': 'no-cache',
             'X-Treg-Route-Max-Cost': str(route_max_micro / 1e6),
@@ -513,15 +531,26 @@ class WebSearchPipeline:
         
         url = f"{self.treg_base}/call/{endpoint}"
         
-        # Always POST with JSON body (query params go in body too)
-        payload = body or query or {}
-        
-        response = await self.http_client.post(
-            url,
-            json=payload,
-            headers=headers,
-            timeout=TIMEOUTS['treg'],
-        )
+        if method == 'GET':
+            # GET with query parameters
+            if query:
+                query_str = urllib.parse.urlencode(query)
+                url = f"{url}?{query_str}"
+            response = await self.http_client.get(
+                url,
+                headers=headers,
+                timeout=TIMEOUTS['treg'],
+            )
+        else:
+            # POST with JSON body
+            headers['Content-Type'] = 'application/json'
+            payload = body or query or {}
+            response = await self.http_client.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=TIMEOUTS['treg'],
+            )
         
         # Read actual cost from response headers
         cost_micro = 0
@@ -877,7 +906,8 @@ class WebSearchPipeline:
         try:
             result, cost_micro = await self.call_treg(
                 'millionverifier.people.email.verify',
-                query={'email': email, 'timeout': '10'}
+                query={'email': email, 'timeout': '10'},
+                method='GET'
             )
             await self.record_spend('millionverifier.people.email.verify', cost_micro)
             status = result.get('result', 'unknown')
@@ -908,7 +938,8 @@ class WebSearchPipeline:
         try:
             result, cost_micro = await self.call_treg(
                 'bounceban.people.email.verify',
-                query={'email': email}
+                query={'email': email},
+                method='GET'
             )
             await self.record_spend('bounceban.people.email.verify', cost_micro)
             bb_id = result.get('id')
@@ -961,7 +992,8 @@ class WebSearchPipeline:
                     
                     result, cost_micro = await self.call_treg(
                         'bounceban.people.email.verify.status',
-                        query={'id': bb_id}
+                        query={'id': bb_id},
+                        method='GET'
                     )
                     # Status polling is free (cost_micro should be 0)
                     status = result.get('result') or result.get('status')
