@@ -1005,6 +1005,7 @@ async def main():
     parser.add_argument('--dry-run', action='store_true', help='Dry run (mock paid calls, real free fetches)')
     parser.add_argument('--mock-searches', help='Path to searches.jsonl for mocking')
     parser.add_argument('--suppression-file', help='Path to suppression JSON')
+    parser.add_argument('--skip-eligibility', action='store_true', help='Skip eligibility filters (use any companies from mock-searches)')
     parser.add_argument('--supabase-url', default=os.environ.get('SUPABASE_URL', DEFAULT_SUPABASE_URL))
     parser.add_argument('--supabase-key', default=os.environ.get('SUPABASE_KEY') or os.environ.get('SUPABASE_SERVICE_ROLE_KEY'))
     parser.add_argument('--treg-token', default=os.environ.get('treg'))
@@ -1033,67 +1034,86 @@ async def main():
     
     # Enhanced eligibility query: exclude companies with existing leads
     print("Fetching eligible companies...")
-    today = datetime.now().date()
-    ninety_days = today + timedelta(days=90)
     
-    # Base eligible: CLEAR, expiring in 90 days, no domain yet, no dm_email
-    response = supabase.table('cslb_companies').select(
-        'license_no, business_name, business_phone, city, state, primary_principal_name'
-    ).is_('company_domain', 'null') \
-     .is_('dm_email', 'null') \
-     .eq('primary_status', 'CLEAR') \
-     .gte('expiration_date_iso', today.isoformat()) \
-     .lte('expiration_date_iso', ninety_days.isoformat()).execute()
-    
-    eligible = response.data
-    base_count = len(eligible)
-    
-    # Filter out already web-searched
-    searched_response = supabase.table('codicen_enrichment_attempts').select(
-        'license_no'
-    ).eq('method', 'web_search').execute()
-    
-    searched_licenses = {row['license_no'] for row in searched_response.data}
-    eligible = [c for c in eligible if c['license_no'] not in searched_licenses]
-    
-    # Filter out companies with existing Codicen campaign leads (read-only check)
-    try:
-        campaign_response = supabase.table('codicen_campaign_leads').select(
+    if args.skip_eligibility and args.mock_searches:
+        # For testing: use license_nos from mock searches
+        print("Using --skip-eligibility: fetching companies from mock searches...")
+        license_nos = list(mock_searches.keys())
+        if args.limit:
+            license_nos = license_nos[:args.limit]
+        
+        # Fetch company details for these licenses
+        eligible = []
+        for i in range(0, len(license_nos), 100):
+            chunk = license_nos[i:i+100]
+            response = supabase.table('cslb_companies').select(
+                'license_no, business_name, business_phone, city, state, primary_principal_name'
+            ).in_('license_no', chunk).execute()
+            eligible.extend(response.data)
+        
+        print(f"Fetched {len(eligible)} companies from mock searches (skip-eligibility mode)")
+    else:
+        today = datetime.now().date()
+        ninety_days = today + timedelta(days=90)
+        
+        # Base eligible: CLEAR, expiring in 90 days, no domain yet, no dm_email
+        response = supabase.table('cslb_companies').select(
+            'license_no, business_name, business_phone, city, state, primary_principal_name'
+        ).is_('company_domain', 'null') \
+         .is_('dm_email', 'null') \
+         .eq('primary_status', 'CLEAR') \
+         .gte('expiration_date_iso', today.isoformat()) \
+         .lte('expiration_date_iso', ninety_days.isoformat()).execute()
+        
+        eligible = response.data
+        base_count = len(eligible)
+        
+        # Filter out already web-searched
+        searched_response = supabase.table('codicen_enrichment_attempts').select(
             'license_no'
-        ).limit(10000).execute()
-        campaign_licenses = {row['license_no'] for row in campaign_response.data if row.get('license_no')}
-    except Exception as e:
-        print(f"Warning: Could not check codicen_campaign_leads: {e}")
-        campaign_licenses = set()
-    
-    # Filter out companies with ready leads in pipeline_leads (batch_id starts with 'codicen')
-    # Note: pipeline_leads stores license_no in raw JSON metadata
-    try:
-        pipeline_response = supabase.table('pipeline_leads').select(
-            'raw'
-        ).like('batch_id', 'codicen%').execute()
-        pipeline_licenses = set()
-        for row in pipeline_response.data:
-            raw = row.get('raw') or {}
-            license_no = raw.get('license_no')
-            if license_no:
-                pipeline_licenses.add(license_no)
-    except Exception as e:
-        print(f"Warning: Could not check pipeline_leads: {e}")
-        pipeline_licenses = set()
-    
-    already_have_leads = campaign_licenses | pipeline_licenses
-    
-    had_candidates_before = len(eligible)
-    eligible = [c for c in eligible if c['license_no'] not in already_have_leads]
-    had_candidates_after = len(eligible)
-    
-    print(f"Eligible companies breakdown:")
-    print(f"  Base eligible (CLEAR, 90d, no domain/dm_email): {base_count}")
-    print(f"  Already web-searched:                            {len(searched_licenses)}")
-    print(f"  After filtering searched:                        {had_candidates_before}")
-    print(f"  Already have Codicen leads:                      {len(already_have_leads)}")
-    print(f"  Final eligible:                                  {had_candidates_after}")
+        ).eq('method', 'web_search').execute()
+        
+        searched_licenses = {row['license_no'] for row in searched_response.data}
+        eligible = [c for c in eligible if c['license_no'] not in searched_licenses]
+        
+        # Filter out companies with existing Codicen campaign leads (read-only check)
+        try:
+            campaign_response = supabase.table('codicen_campaign_leads').select(
+                'license_no'
+            ).limit(10000).execute()
+            campaign_licenses = {row['license_no'] for row in campaign_response.data if row.get('license_no')}
+        except Exception as e:
+            print(f"Warning: Could not check codicen_campaign_leads: {e}")
+            campaign_licenses = set()
+        
+        # Filter out companies with ready leads in pipeline_leads (batch_id starts with 'codicen')
+        # Note: pipeline_leads stores license_no in raw JSON metadata
+        try:
+            pipeline_response = supabase.table('pipeline_leads').select(
+                'raw'
+            ).like('batch_id', 'codicen%').execute()
+            pipeline_licenses = set()
+            for row in pipeline_response.data:
+                raw = row.get('raw') or {}
+                license_no = raw.get('license_no')
+                if license_no:
+                    pipeline_licenses.add(license_no)
+        except Exception as e:
+            print(f"Warning: Could not check pipeline_leads: {e}")
+            pipeline_licenses = set()
+        
+        already_have_leads = campaign_licenses | pipeline_licenses
+        
+        had_candidates_before = len(eligible)
+        eligible = [c for c in eligible if c['license_no'] not in already_have_leads]
+        had_candidates_after = len(eligible)
+        
+        print(f"Eligible companies breakdown:")
+        print(f"  Base eligible (CLEAR, 90d, no domain/dm_email): {base_count}")
+        print(f"  Already web-searched:                            {len(searched_licenses)}")
+        print(f"  After filtering searched:                        {had_candidates_before}")
+        print(f"  Already have Codicen leads:                      {len(already_have_leads)}")
+        print(f"  Final eligible:                                  {had_candidates_after}")
     
     if args.limit:
         eligible = eligible[:args.limit]
