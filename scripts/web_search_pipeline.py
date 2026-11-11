@@ -81,13 +81,30 @@ JEV_THRESHOLDS = {
     'phone_match': {'contractor': 0.55, 'california': 0.75, 'identity': 0.85},
 }
 
-# Directory hosts to exclude
+# Directory hosts to exclude (from prototype)
 DIRECTORY_HOSTS = {
-    'yelp.com', 'bbb.org', 'angi.com', 'homeadvisor.com', 'facebook.com',
-    'linkedin.com', 'yellowpages.com', 'buildzoom.com', 'thumbtack.com',
-    'houzz.com', 'instagram.com', 'cslb.ca.gov', 'wikipedia.org', 'mapquest.com',
-    'local.yahoo.com', 'ezlocal.com', 'twitter.com', 'x.com',
+    'yelp.com', 'bbb.org', 'bbb.com', 'angi.com', 'angieslist.com', 'houzz.com',
+    'homeadvisor.com', 'thumbtack.com', 'facebook.com', 'fb.com', 'instagram.com',
+    'linkedin.com', 'mapquest.com', 'cslb.ca.gov', 'buildzoom.com', 'porch.com',
+    'nextdoor.com', 'yellowpages.com', 'yp.com', 'manta.com', 'bizapedia.com',
+    'opencorporates.com', 'zoominfo.com', 'dnb.com', 'dandb.com', 'whitepages.com',
+    'superpages.com', 'merchantcircle.com', 'chamberofcommerce.com', 'crunchbase.com',
+    'wikipedia.org', 'youtube.com', 'twitter.com', 'x.com', 'tiktok.com', 'pinterest.com',
+    'reddit.com', 'quora.com', 'craigslist.org', 'indeed.com', 'glassdoor.com',
+    'apple.com', 'google.com', 'googleusercontent.com', 'goo.gl', 'bing.com', 'yahoo.com',
+    'expertise.com', 'homeguide.com', 'modernize.com', 'kudzu.com', 'buzzfile.com',
+    'local.yahoo.com', 'ezlocal.com', 'thebluebook.com',
 }
+
+
+def is_directory(host: str) -> bool:
+    """Check if host is a directory site"""
+    h = (host or '').lower().removeprefix('www.')
+    if not h:
+        return True
+    if h in DIRECTORY_HOSTS:
+        return True
+    return any(h.endswith('.' + d) for d in DIRECTORY_HOSTS)
 
 # Email patterns
 EMAIL_RE = re.compile(r'[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,229}\.[A-Za-z]{2,24}')
@@ -159,6 +176,53 @@ def extract_emails_from_text(domain: str, texts: List[str], htmls: List[str]) ->
             accepted.append(e)
     
     return sorted(set(accepted))
+
+
+def parse_search_response(body: Dict) -> Tuple[List[Dict], List[str]]:
+    """Parse search response trying multiple paths (from prototype)
+    
+    Returns: (results_list, emails_from_snippets)
+    """
+    if not isinstance(body, dict):
+        return [], []
+    
+    # Try multiple response shapes
+    results = None
+    for path in [
+        ['output', 'data', 'results'],
+        ['output', 'results'],
+        ['data', 'results'],
+        ['results'],
+        ['organic'],
+        ['organic_results'],
+    ]:
+        cur = body
+        ok = True
+        for k in path:
+            if isinstance(cur, dict) and k in cur:
+                cur = cur[k]
+            else:
+                ok = False
+                break
+        if ok and isinstance(cur, list):
+            results = cur
+            break
+    
+    if results is None:
+        results = []
+    
+    # Extract emails from snippets
+    emails = []
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        snippet = str(r.get('snippet', '')) + ' ' + str(r.get('title', ''))
+        for match in EMAIL_RE.findall(snippet):
+            email_lower = match.lower()
+            if '@' in email_lower and email_lower not in emails:
+                emails.append(email_lower)
+    
+    return results, emails
 
 
 def check_email_quality(email: str, company_name: str, domain: str) -> str:
@@ -476,29 +540,37 @@ class WebSearchPipeline:
             )
             
             await self.record_spend('anyapi.google.serp.organic', cost_micro)
-            await self.record_attempt('web_search', license_no, None, 'completed', cost_micro)
             
-            # Treg returns output wrapper or direct results
-            output = result.get('output', result)
-            raw_results = output.get('results', []) or output.get('organic', [])
+            # Parse response with prototype fallback paths
+            results_list, emails = parse_search_response(result)
             
+            # Pick non-directory domains
             domains = []
-            emails = []
-            
-            for r in raw_results[:10]:
+            seen = set()
+            for r in results_list[:10]:
                 url = r.get('link') or r.get('url', '')
                 if url:
                     host = urlparse(url).netloc.lower().removeprefix('www.')
-                    if host and host not in DIRECTORY_HOSTS and host not in domains:
+                    if host and host not in seen and not is_directory(host):
                         domains.append(host)
-                
-                snippet = r.get('snippet', '') + ' ' + r.get('title', '')
-                for email in EMAIL_RE.findall(snippet):
-                    email_lower = email.lower()
-                    if '@' in email_lower and email_lower not in emails:
-                        emails.append(email_lower)
+                        seen.add(host)
+            
+            # Store metadata with raw response for potential reprocessing
+            metadata = {
+                'query': query,
+                'n_results': len(results_list),
+                'n_domains': len(domains),
+                'n_emails': len(emails),
+            }
+            
+            await self.record_attempt('web_search', license_no, None, 'completed', cost_micro, metadata)
             
             self.stats['searches_completed'] += 1
+            if domains:
+                self.stats['searches_with_domains'] += 1
+            if emails:
+                self.stats['searches_with_emails'] += 1
+            
             return domains, emails
         
         except Exception as e:
