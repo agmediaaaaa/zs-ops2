@@ -486,7 +486,7 @@ class WebSearchPipeline:
                     for retry in range(3):
                         try:
                             self.supabase.table('pipeline_leads').upsert(
-                                chunk, on_conflict='email,batch_id'
+                                chunk, on_conflict='email'
                             ).execute()
                             break
                         except Exception as e:
