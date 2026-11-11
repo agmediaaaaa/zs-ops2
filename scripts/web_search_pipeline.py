@@ -567,6 +567,33 @@ class WebSearchPipeline:
         
         await self.record_spend('openrouter.ai-judge.decide')
         
+        # Mock Jev in dry-run
+        if self.dry_run:
+            import random
+            # Simulate: 30% confirmed (license) or 20% confirmed (phone)
+            if markers.get('license_match'):
+                confirmed = random.random() < 0.3
+                probs = {
+                    'contractor': 0.75 if confirmed else 0.40,
+                    'california': 0.85 if confirmed else 0.65,
+                    'identity': 0.90 if confirmed else 0.70,
+                }
+            else:
+                confirmed = random.random() < 0.2
+                probs = {
+                    'contractor': 0.75 if confirmed else 0.50,
+                    'california': 0.85 if confirmed else 0.70,
+                    'identity': 0.90 if confirmed else 0.80,
+                }
+            
+            self.stats['jev_calls'] += 1
+            if confirmed:
+                self.stats['jev_confirmed'] += 1
+            else:
+                self.stats['jev_rejected'] += 1
+            
+            return confirmed, probs
+        
         try:
             result = await self.call_treg('openrouter.ai-judge.decide', body=body, idem_key=f"{self.batch_id}-jev-{domain}")
             
