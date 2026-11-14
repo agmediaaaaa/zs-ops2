@@ -1,0 +1,53 @@
+---
+description: Systems of record — Notion knowledge, Airtable data, GrokBot execution
+alwaysApply: true
+---
+
+# Company Brain — systems of record (always-on)
+
+Canonical routing for Zillion knowledge, data, and action. Do not collapse these layers.
+
+## Notion — Company Brain (knowledge source)
+
+Everything Zillion learns and reuses:
+
+- Company information and positioning
+- Client-specific strategy and ICP documentation
+- Campaign intelligence and research insights
+- Offers and offer frameworks
+- Best-performing scripts and copy
+- SOPs and workflows
+- Internal documentation and training
+
+## Airtable — Operational Database (data source)
+
+Everything measurable and record-based:
+
+- Master client database
+- Individual client campaign databases
+- Lead records and lead statuses
+- Campaign performance
+- Weekly performance snapshots
+- Positive replies and booked meetings
+- Sending infrastructure metrics
+- Client reporting numbers
+
+## GrokBot — Execution Layer (automation agent)
+
+Everything that requires taking action:
+
+- Client onboarding
+- Sending emails and documents
+- Creating Slack channels
+- Inviting team members
+- Creating Airtable records
+- Updating Notion
+- Assigning tasks
+- Sending notifications
+
+## Routing rules
+
+1. **Learn / reuse / document** → Notion. Do not park SOPs, ICP, offers, or copy learnings only in Airtable or chat.
+2. **Measure / record / report** → Airtable. Do not use Notion pages as the source of truth for lead status, performance, or reporting numbers.
+3. **Take action / automate** → GrokBot. GrokBot reads Notion (how) and Airtable (state); writes Airtable for ops changes and Notion when durable knowledge should persist.
+4. **Lead-scrape SOPs** stay in this repo (see `lead-scrape.mdc`) — that exception overrides Notion for scrape playbooks only.
