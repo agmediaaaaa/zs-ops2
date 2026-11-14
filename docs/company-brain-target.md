@@ -97,10 +97,18 @@ Source SOPs to encode (do not leave as human-only forever):
 | --- | --- |
 | Base | https://airtable.com/appxmkWs0HNIoPy5n |
 | Weekly overview (KPIs + charts) | https://airtable.com/appxmkWs0HNIoPy5n/pagfHEP7zsYuAq4mq |
-| Dealflow board | https://airtable.com/appxmkWs0HNIoPy5n/pagmzjjmzmUAx3bcH |
+| Dealflow (list + Status groups) | https://airtable.com/appxmkWs0HNIoPy5n/pagHduXgO5OKXU2h3 |
 | Weekly snapshots grid | https://airtable.com/appxmkWs0HNIoPy5n/pagIehKsYymP4QmkM |
-| Slack automation (draft → `#zs-chat`) | https://airtable.com/appxmkWs0HNIoPy5n/wflNNZjJzxdJc2CmL |
+| Slack — new positive lead (draft) | https://airtable.com/appxmkWs0HNIoPy5n/wflNNZjJzxdJc2CmL |
+| Prefill Deal Value $5000 (draft) | https://airtable.com/appxmkWs0HNIoPy5n/wflyDOtJmL1PiA7Dc |
+| Slack — weekly snapshot Saturdays (draft) | https://airtable.com/appxmkWs0HNIoPy5n/wflkTpKE9aLAMcd25 |
 
-Includes: Positive lead dealflow + Weekly performance snapshots, 12 seeded leads, 8 weekly rows, published Client Reporting interface, Slack alert on new lead (turn **on** in UI).
+Rules locked in this demo:
+
+- Dealflow = **list view grouped by Status**; Deal Value = currency default **$5000** (editable), not a dropdown
+- Weekly snapshots = **filled by GrokBot**
+- Every **Saturday** (~10:00 Asia/Calcutta) the latest snapshot posts to client Slack (`#zs-chat` for demo)
+
+Turn the three draft automations **on** in the Airtable UI after review.
 
 Onboarding APIs (JotForm / Slack Connect / Payoneer) deferred until files arrive.

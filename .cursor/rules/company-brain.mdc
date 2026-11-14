@@ -30,10 +30,10 @@ Do **not** treat Notion as home for:
 
 Per-client base must support:
 
-1. **Lead status** — Positive lead dealflow (existing)
-2. **Weekly performance snapshots** — one row per week (sent, replies, positives, meetings, etc.)
-3. **Reporting overview** — client-visible weekly reporting surface
-4. **Reporting automation** — scheduled/rollup automation that refreshes snapshots + overview
+1. **Lead status** — Positive lead dealflow as a **list grouped by Status**; Deal Value is currency (not a select), **prefill $5000** on create, editable
+2. **Weekly performance snapshots** — one row per week; **GrokBot fills** these (not humans)
+3. **Reporting overview** — client-visible weekly reporting surface (interface charts)
+4. **Reporting automation** — every **Saturday**, post the latest weekly snapshot to the **client Slack channel**
 
 Also keep:
 
@@ -56,7 +56,7 @@ Primary job: take action. Highest-priority automated onboarding sequence:
 8. Wire PlusVibe → Airtable webhooks (positive leads / booked status)
 9. Continue handoff steps (form follow-up, calendar sync notify) as defined in Client Onboarding
 
-Ongoing execution also includes: Slack notifications, Airtable record creates/updates, Notion best-campaign writes, task assignment.
+Ongoing execution also includes: **writing weekly performance snapshots**, Saturday-ready reporting data, Slack notifications, Airtable record creates/updates, Notion best-campaign writes, task assignment.
 
 ## Routing rules
 
