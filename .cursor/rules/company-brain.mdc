@@ -1,0 +1,66 @@
+---
+description: Systems of record — Notion best campaigns, Airtable reporting, GrokBot onboarding/execution
+alwaysApply: true
+---
+
+# Company Brain — systems of record (always-on)
+
+Canonical routing for Zillion. Keep layers thin. Do not invent extra knowledge stores.
+
+## Reality check (current gaps)
+
+- Client Airtable bases today are mostly **Positive lead dealflow** (+ optional Campaign Targeting). No weekly snapshots, no client reporting overview, no reporting automation.
+- Campaign scripts / ideas / performance narrative often sit in **Notion** — that is wrong for reporting; Notion only keeps **best campaigns**.
+- Front-office onboarding (contract → payment → Slack → Tally → PlusVibe workspace → Airtable base → webhooks) is still largely manual in the Client Onboarding / Client Setup SOPs. Target: **GrokBot runs it end-to-end** when onboarding starts.
+
+## Notion — Company Brain (knowledge, slim)
+
+Only durable reuse that is not a metric:
+
+- **Best campaigns** (winning scripts / angles) — GrokBot writes these
+- Ops SOPs and workflows that humans/agents must follow
+- Internal docs required to operate (not a dumping ground for every ICP draft)
+
+Do **not** treat Notion as home for:
+
+- Positioning dumps, full ICP strategy packs, offer frameworks, or all campaign intelligence
+- Weekly performance numbers or client reporting views
+
+## Airtable — Operational Database (data + reporting)
+
+Per-client base must support:
+
+1. **Lead status** — Positive lead dealflow as a **list grouped by Status**; Deal Value is currency (not a select), **prefill $5000** on create, editable
+2. **Weekly performance snapshots** — one row per week; **GrokBot fills** these (not humans)
+3. **Reporting overview** — client-visible weekly reporting surface (interface charts)
+4. **Reporting automation** — every **Saturday**, post the latest weekly snapshot to the **client Slack channel**
+
+Also keep:
+
+- Master client registry (**ZS OS**) for account-level status
+- Template base that new clients get **duplicated** from at onboarding
+
+Do **not** park campaign creative / best-campaign copy primarily in Airtable.
+
+## GrokBot — Execution Layer (automation)
+
+Primary job: take action. Highest-priority automated onboarding sequence:
+
+1. Generate JotForm contract
+2. Send payment link
+3. Create private Slack channel `#client-[company]`
+4. Invite client + internal owners
+5. Post welcome message (welcome video + Tally onboarding form)
+6. Create PlusVibe workspace for the client
+7. Duplicate Airtable client base from template
+8. Wire PlusVibe → Airtable webhooks (positive leads / booked status)
+9. Continue handoff steps (form follow-up, calendar sync notify) as defined in Client Onboarding
+
+Ongoing execution also includes: **writing weekly performance snapshots**, Saturday-ready reporting data, Slack notifications, Airtable record creates/updates, Notion best-campaign writes, task assignment.
+
+## Routing rules
+
+1. **Best campaign / SOP** → Notion.
+2. **Lead status / weekly snapshot / client reporting** → Airtable (never Notion).
+3. **Onboarding + wiring + notifications** → GrokBot.
+4. **Lead-scrape playbooks** stay in this repo (`lead-scrape.mdc`) — scrape SOPs are not Notion.
