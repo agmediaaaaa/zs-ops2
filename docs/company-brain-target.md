@@ -88,3 +88,19 @@ Source SOPs to encode (do not leave as human-only forever):
 - Rebuilding full ICP / offer / positioning libraries in Notion
 - Using Notion as the weekly client reporting sheet
 - Manual Airtable base creation + webhook copy-paste as the steady-state process
+
+## Demo base (built)
+
+**[ZS Demo — Client Reporting](https://airtable.com/appxmkWs0HNIoPy5n)** in workspace `ZS OPS`
+
+| Piece | Link |
+| --- | --- |
+| Base | https://airtable.com/appxmkWs0HNIoPy5n |
+| Weekly overview (KPIs + charts) | https://airtable.com/appxmkWs0HNIoPy5n/pagfHEP7zsYuAq4mq |
+| Dealflow board | https://airtable.com/appxmkWs0HNIoPy5n/pagmzjjmzmUAx3bcH |
+| Weekly snapshots grid | https://airtable.com/appxmkWs0HNIoPy5n/pagIehKsYymP4QmkM |
+| Slack automation (draft → `#zs-chat`) | https://airtable.com/appxmkWs0HNIoPy5n/wflNNZjJzxdJc2CmL |
+
+Includes: Positive lead dealflow + Weekly performance snapshots, 12 seeded leads, 8 weekly rows, published Client Reporting interface, Slack alert on new lead (turn **on** in UI).
+
+Onboarding APIs (JotForm / Slack Connect / Payoneer) deferred until files arrive.
